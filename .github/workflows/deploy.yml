@@ -34,7 +34,7 @@ jobs:
       - name: Merge private data into the build
         if: env.DATA_REPO != ''
         run: |
-          cp -r _data/data/. public/data/
+          if [ -d _data/data ]; then cp -r _data/data/. public/data/; fi
           if [ -d _data/images ]; then cp -r _data/images/. public/images/; fi
           rm -rf _data
       - uses: actions/setup-node@v4

@@ -1,7 +1,7 @@
 # Admin guide (GitHub-only, no worker)
 
 ## One-time setup
-1. **Private data repo**: create `USERNAME/candle-data` (Private). Upload `data-repo-template/data` and `data-repo-template/images` to its root.
+1. **Private data repo**: create `USERNAME/candle-data` (Private). Create it with "Add a README" ticked (the build needs at least one commit). You do **not** need to upload anything: on first login the admin creates any missing `data/*.json` file automatically (empty product list, sample categories/homepage/settings). `data-repo-template/` is optional if you want the sample products and images.
 2. **Build token** (read-only): Settings → Developer settings → Fine-grained tokens → only `candle-data`, **Contents: Read-only**. In the *site* repo: Settings → Secrets and variables → Actions → Secrets:
    - `DATA_REPO` = `USERNAME/candle-data`
    - `DATA_REPO_TOKEN` = that token

@@ -77,11 +77,28 @@ async function loadHistory() {
     history = l.map((c) => ({ message: c.commit.message.split('\n')[0] ?? '', author: c.commit.author.name, date: c.commit.author.date }));
   } catch { /* history is optional */ }
 }
+/** Starter content for a file missing from the private repo: the site's bundled sample, minus references to files that don't exist there. */
+async function defaultFor(n: DataName): Promise<unknown> {
+  if (n === 'products') return [];
+  const r = await fetch(asset(`data/${n}.json`));
+  if (!r.ok) throw new ApiError(0, `نمونه اولیه ${n}.json در سایت پیدا نشد.`);
+  const d = (await r.json()) as Record<string, unknown>;
+  if (n === 'homepage') { d.featuredIds = []; d.banners = []; }
+  return d;
+}
+let createdFiles: string[] = [];
 async function loadAll() {
   const names: DataName[] = ['products', 'categories', 'homepage', 'settings'];
-  for (const n of names) {
-    const f = await getFile(`data/${n}.json`);
-    if (!f) throw new ApiError(404, `فایل data/${n}.json در مخزن داده نیست. محتوای پوشه data-repo-template را در آن آپلود کنید.`);
+  createdFiles = [];
+  for (const n of names) { // sequential: parallel commits to one branch can conflict
+    let f = await getFile(`data/${n}.json`);
+    if (!f) {
+      const content = await defaultFor(n);
+      const text = JSON.stringify(content, null, 2) + '\n';
+      const sha = await putFile(`data/${n}.json`, toB64(text), `admin(${user}): create ${n}.json`);
+      f = { sha, text };
+      createdFiles.push(`${n}.json`);
+    }
     (db as Record<string, unknown>)[n] = { content: JSON.parse(f.text), sha: f.sha };
   }
   await loadHistory();
@@ -282,6 +299,7 @@ async function login(token: string, repo: string) {
     if (!r.private) throw new Error('این مخزن عمومی است. داده‌ها باید در یک مخزن خصوصی باشند.');
     if (!r.permissions?.push) throw new Error('توکن اجازه نوشتن روی این مخزن را ندارد.');
     await loadAll();
+    if (createdFiles.length) setTimeout(() => note(`فایل‌های اولیه در مخزن ساخته شد: ${createdFiles.join('، ')}`), 300);
   } catch (e) { creds = null; user = ''; throw e; }
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(creds));
 }

@@ -5,18 +5,49 @@ import { validateCategories, validateHomepage, validateProduct, validateProducts
 import { html, mount, raw, $, $$, type Safe } from '../utils/dom';
 import { asset, dateFa, faNum, slugify } from '../utils/format';
 
-const API = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
+const SITE_REPO = import.meta.env.VITE_SITE_REPO ?? '';
+const DEFAULT_DATA_REPO = import.meta.env.VITE_DATA_REPO ?? '';
+const SESSION_KEY = 'candle-admin-session';
+const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const root = $('#admin')!;
 
 class ApiError extends Error { constructor(readonly status: number, m: string) { super(m); } }
-async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** The admin's own GitHub token: kept only in memory (+ sessionStorage for this tab) and sent only to api.github.com. */
+let creds: { token: string; repo: string } | null = null;
+
+async function gh(path: string, init: RequestInit = {}, rawMedia = false): Promise<Response> {
+  if (!creds) throw new ApiError(401, 'وارد نشده‌اید.');
   let r: Response;
   try {
-    r = await fetch(API + path, { ...init, credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'admin' } });
-  } catch { throw new ApiError(0, 'اتصال به سرویس مدیریت برقرار نشد.'); }
-  const body = (await r.json().catch(() => ({}))) as { error?: string; details?: string[] };
-  if (!r.ok) throw new ApiError(r.status, [body.error, ...(body.details ?? [])].filter(Boolean).join(' — ') || r.statusText);
-  return body as T;
+    r = await fetch(`https://api.github.com${path}`, {
+      ...init,
+      headers: { Authorization: `Bearer ${creds.token}`, Accept: rawMedia ? 'application/vnd.github.raw+json' : 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+    });
+  } catch { throw new ApiError(0, 'اتصال به GitHub برقرار نشد.'); }
+  if (!r.ok) {
+    const b = (await r.json().catch(() => ({}))) as { message?: string };
+    const m = r.status === 401 ? 'توکن نامعتبر یا منقضی است.'
+      : r.status === 403 ? 'دسترسی توکن کافی نیست (روی مخزن داده: Contents → Read and write) یا محدودیت نرخ GitHub.'
+      : r.status === 404 ? 'مخزن یا فایل پیدا نشد (یا توکن به آن دسترسی ندارد).'
+      : r.status === 409 || r.status === 422 ? 'فایل هم‌زمان تغییر کرده است؛ «بازخوانی» را بزنید و دوباره تلاش کنید.'
+      : (b.message ?? r.statusText);
+    throw new ApiError(r.status, m);
+  }
+  return r;
+}
+const toB64 = (t: string) => { let b = ''; new TextEncoder().encode(t).forEach((c) => { b += String.fromCharCode(c); }); return btoa(b); };
+const fromB64 = (t: string) => new TextDecoder().decode(Uint8Array.from(atob(t.replace(/\n/g, '')), (c) => c.charCodeAt(0)));
+const R = () => `/repos/${creds!.repo}`;
+
+async function getFile(path: string): Promise<{ sha: string; text: string } | null> {
+  try {
+    const j = (await (await gh(`${R()}/contents/${path}`)).json()) as { sha: string; content: string };
+    return { sha: j.sha, text: fromB64(j.content) };
+  } catch (e) { if (e instanceof ApiError && e.status === 404) return null; throw e; }
+}
+async function putFile(path: string, b64: string, message: string, sha?: string): Promise<string> {
+  const r = await gh(`${R()}/contents/${path}`, { method: 'PUT', body: JSON.stringify({ message, content: b64, ...(sha ? { sha } : {}) }) });
+  return ((await r.json()) as { content: { sha: string } }).content.sha;
 }
 
 interface Doc<T> { content: T; sha: string }
@@ -29,26 +60,69 @@ let tab: Tab = 'overview';
 let editing: { p: Product; isNew: boolean; orig: string[] } | null = null;
 let hp: Homepage | null = null;
 let errors: string[] = [];
+let pendingWarn = '';
 
 let mt = 0;
 function note(m: string, err = false) {
   const el = $('#msg') ?? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'msg', role: 'status' }));
-  el.textContent = m; el.className = err ? 'err' : ''; el.hidden = false;
-  clearTimeout(mt); mt = window.setTimeout(() => { el.hidden = true; }, 5000);
+  el.textContent = pendingWarn ? `${m} ${pendingWarn}` : m; el.className = err || pendingWarn ? 'err' : ''; el.hidden = false;
+  pendingWarn = '';
+  clearTimeout(mt); mt = window.setTimeout(() => { el.hidden = true; }, 7000);
 }
-const fail = (e: unknown) => note(e instanceof ApiError && e.status === 409 ? 'فایل هم‌زمان تغییر کرده است. «بازخوانی» را بزنید و دوباره تلاش کنید.' : e instanceof Error ? e.message : 'خطای ناشناخته', true);
+const fail = (e: unknown) => note(e instanceof Error ? e.message : 'خطای ناشناخته', true);
 
+async function loadHistory() {
+  try {
+    const l = (await (await gh(`${R()}/commits?path=data&per_page=8`)).json()) as { commit: { message: string; author: { name: string; date: string } } }[];
+    history = l.map((c) => ({ message: c.commit.message.split('\n')[0] ?? '', author: c.commit.author.name, date: c.commit.author.date }));
+  } catch { /* history is optional */ }
+}
 async function loadAll() {
   const names: DataName[] = ['products', 'categories', 'homepage', 'settings'];
-  const res = await Promise.all(names.map((n) => api<Doc<never>>(`/api/data/${n}`)));
-  names.forEach((n, i) => { (db as Record<string, unknown>)[n] = res[i]; });
-  history = (await api<{ commits: Commit[] }>('/api/history').catch(() => ({ commits: [] }))).commits;
+  for (const n of names) {
+    const f = await getFile(`data/${n}.json`);
+    if (!f) throw new ApiError(404, `فایل data/${n}.json در مخزن داده نیست. محتوای پوشه data-repo-template را در آن آپلود کنید.`);
+    (db as Record<string, unknown>)[n] = { content: JSON.parse(f.text), sha: f.sha };
+  }
+  await loadHistory();
+}
+/** Ask the public site repo to rebuild so changes go live (needs Actions: write on the site repo). */
+async function publish() {
+  if (!SITE_REPO) { pendingWarn = 'انتشار خودکار تنظیم نشده؛ workflow سایت را دستی اجرا کنید.'; return; }
+  try { await gh(`/repos/${SITE_REPO}/actions/workflows/deploy.yml/dispatches`, { method: 'POST', body: JSON.stringify({ ref: 'main' }) }); }
+  catch { pendingWarn = 'ذخیره شد اما انتشار خودکار انجام نشد؛ به توکن دسترسی Actions روی مخزن سایت بدهید یا workflow را دستی اجرا کنید.'; }
 }
 async function save(name: DataName, content: unknown) {
   const doc = db[name] as Doc<unknown>;
-  const r = await api<{ sha: string }>(`/api/data/${name}`, { method: 'PUT', body: JSON.stringify({ content, sha: doc.sha }) });
-  (db as Record<string, unknown>)[name] = { content, sha: r.sha };
-  history = (await api<{ commits: Commit[] }>('/api/history').catch(() => ({ commits: history }))).commits;
+  const sha = await putFile(`data/${name}.json`, toB64(JSON.stringify(content, null, 2) + '\n'), `admin(${user}): update ${name}.json`, doc.sha);
+  (db as Record<string, unknown>)[name] = { content, sha };
+  await Promise.all([loadHistory(), publish()]);
+}
+
+/* ---------- private-repo image previews ---------- */
+const MIME: Record<string, string> = { webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', svg: 'image/svg+xml' };
+const previews = new Map<string, string>();
+async function imgSrc(path: string): Promise<string> {
+  const hit = previews.get(path);
+  if (hit) return hit;
+  try {
+    const r = await gh(`${R()}/contents/${path}`, {}, true);
+    const u = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: MIME[path.split('.').pop() ?? ''] ?? 'image/webp' }));
+    previews.set(path, u);
+    return u;
+  } catch { return asset(path); }
+}
+function hydrate() {
+  $$<HTMLImageElement>('img[data-p]').forEach((i) => { const p = i.dataset.p; if (p) void imgSrc(p).then((u) => { i.src = u; }); });
+}
+async function removeImage(path: string) {
+  try {
+    if (!/^images\/(products|banners|categories)\//.test(path)) return;
+    const used = JSON.stringify([db.products?.content, db.homepage?.content, db.categories?.content]);
+    if (used.includes(`"${path}"`)) return;
+    const f = await getFile(path);
+    if (f) await gh(`${R()}/contents/${path}`, { method: 'DELETE', body: JSON.stringify({ message: `admin(${user}): delete ${path}`, sha: f.sha }) });
+  } catch { /* leaving an orphan file is harmless */ }
 }
 
 /* ---------- image handling ---------- */
@@ -70,8 +144,10 @@ async function optimize(file: File): Promise<{ type: string; data: string }> {
 }
 async function upload(file: File, dir: 'products' | 'banners' | 'categories', base: string): Promise<string> {
   const o = await optimize(file);
-  const name = `${slugify(base) || 'image'}-${Date.now().toString(36)}`;
-  return (await api<{ path: string }>('/api/images', { method: 'POST', body: JSON.stringify({ dir, name, contentType: o.type, data: o.data }) })).path;
+  const rel = `images/${dir}/${slugify(base) || 'image'}-${Date.now().toString(36)}.${o.type === 'image/webp' ? 'webp' : 'jpg'}`;
+  await putFile(rel, o.data, `admin(${user}): upload ${rel}`);
+  previews.set(rel, `data:${o.type};base64,${o.data}`);
+  return rel;
 }
 
 /* ---------- form helpers ---------- */
@@ -125,7 +201,7 @@ function productsView(): Safe {
   const name = (id: string) => cats.find((c) => c.id === id)?.name ?? id;
   return html`<div class="panel"><div class="row-actions"><h2>محصولات</h2><span class="sp"></span><button class="btn primary sm" type="button" data-act="new">افزودن محصول</button></div>
     <table><thead><tr><th></th><th>نام</th><th>دسته</th><th>قیمت</th><th>وضعیت</th><th></th></tr></thead><tbody>
-    ${db.products!.content.map((p) => html`<tr><td><img class="thumb" src="${asset(p.images[0] ?? '')}" alt="" /></td><td>${p.name}</td><td>${name(p.category)}</td><td>${faNum(p.price)}</td><td>${p.available ? 'موجود' : 'ناموجود'}</td>
+    ${db.products!.content.map((p) => html`<tr><td><img class="thumb" data-p="${p.images[0] ?? ''}" alt="" /></td><td>${p.name}</td><td>${name(p.category)}</td><td>${faNum(p.price)}</td><td>${p.available ? 'موجود' : 'ناموجود'}</td>
       <td><div class="row-actions"><button class="btn ghost sm" type="button" data-act="edit" data-id="${p.id}">ویرایش</button><button class="btn danger sm" type="button" data-act="del" data-id="${p.id}">حذف</button></div></td></tr>`)}
     </tbody></table></div>
     <form class="panel" data-form="cats"><h2>دسته‌بندی‌ها</h2>
@@ -148,7 +224,7 @@ function productForm(): Safe {
     <label>مشخصات بیشتر (هر خط «عنوان: مقدار»)<textarea name="specs">${sp}</textarea></label>
     <div class="checks"><label class="chk"><input type="checkbox" name="available" ${p.available ? html`checked` : ''}/>موجود</label><label class="chk"><input type="checkbox" name="featured" ${p.featured ? html`checked` : ''}/>ویژه</label><label class="chk"><input type="checkbox" name="isNew" ${p.isNew ? html`checked` : ''}/>جدید</label><label class="chk"><input type="checkbox" name="bestSeller" ${p.bestSeller ? html`checked` : ''}/>پرفروش</label></div>
     <h3>تصاویر (۱ تا ۸)</h3>
-    ${p.images.map((src, i) => html`<div class="imgrow"><img src="${asset(src)}" alt="" /><label>متن جایگزین (alt)<input name="alt${i}" value="${p.imageAlts?.[i] ?? ''}" maxlength="160" /></label><button class="btn danger sm" type="button" data-act="rmimg" data-id="${i}">حذف</button></div>`)}
+    ${p.images.map((src, i) => html`<div class="imgrow"><img data-p="${src}" alt="" /><label>متن جایگزین (alt)<input name="alt${i}" value="${p.imageAlts?.[i] ?? ''}" maxlength="160" /></label><button class="btn danger sm" type="button" data-act="rmimg" data-id="${i}">حذف</button></div>`)}
     <label>افزودن تصویر (JPG, PNG, WebP)<input type="file" data-upload="product" accept="image/jpeg,image/png,image/webp" /></label>
     <div class="row-actions"><button class="btn primary" type="submit">ذخیره محصول</button><button class="btn ghost" type="button" data-act="cancel">انصراف</button></div></form>`;
 }
@@ -160,10 +236,10 @@ function homeView(): Safe {
   const adv = JSON.stringify({ intro, careTips, faq, collections, testimonials }, null, 2);
   return html`<form class="panel" data-form="home"><h2>صفحه اصلی</h2>
     ${field('عنوان اصلی', 'heroTitle', h.heroTitle, 'required')}<label>توضیح اصلی<textarea name="heroDescription">${h.heroDescription}</textarea></label>
-    <div class="imgrow"><img src="${asset(h.heroImage)}" alt="" /><label>تصویر اصلی<input type="file" data-upload="hero" accept="image/jpeg,image/png,image/webp" /></label><span></span></div>
+    <div class="imgrow"><img data-p="${h.heroImage}" alt="" /><label>تصویر اصلی<input type="file" data-upload="hero" accept="image/jpeg,image/png,image/webp" /></label><span></span></div>
     <h3>محصولات ویژه صفحه اصلی</h3><div class="checks">${db.products!.content.map((p) => html`<label class="chk"><input type="checkbox" name="feat" value="${p.id}" ${h.featuredIds.includes(p.id) ? html`checked` : ''}/>${p.name}</label>`)}</div>
     <h3>بنرها</h3>${banners.map((b, i) => html`<div class="panel"><div class="grid2">${field('عنوان', `bt${i}`, b.title)}${field('متن', `bx${i}`, b.text)}<label>لینک (#/shop یا https://)<input name="bl${i}" value="${b.link}" dir="ltr" /></label></div>
-      <div class="imgrow">${b.image ? html`<img src="${asset(b.image)}" alt="" />` : html`<span></span>`}<label>تصویر بنر<input type="file" data-upload="banner" data-id="${i}" accept="image/jpeg,image/png,image/webp" /></label><button class="btn danger sm" type="button" data-act="rmbanner" data-id="${i}">حذف بنر</button></div></div>`)}
+      <div class="imgrow">${b.image ? html`<img data-p="${b.image}" alt="" />` : html`<span></span>`}<label>تصویر بنر<input type="file" data-upload="banner" data-id="${i}" accept="image/jpeg,image/png,image/webp" /></label><button class="btn danger sm" type="button" data-act="rmbanner" data-id="${i}">حذف بنر</button></div></div>`)}
     <button class="btn ghost sm" type="button" data-act="addbanner">افزودن بنر</button>
     <h3>محتوای پیشرفته (JSON)</h3><p class="muted">معرفی برند، نکات نگهداری، پرسش‌های متداول، مجموعه‌ها و نظرات مشتریان (فقط نظرات واقعی).</p>
     <textarea class="code" name="adv">${adv}</textarea>
@@ -187,10 +263,27 @@ function paint() {
   if (!user) return;
   const body = tab === 'overview' ? overview() : tab === 'products' ? productsView() : tab === 'homepage' ? homeView() : settingsView();
   mount(root, shell(body));
+  hydrate();
 }
 function loginView(msg = '') {
-  mount(root, html`<div class="login panel"><h1>پنل مدیریت</h1><p class="muted">برای ورود از حساب GitHub مجاز استفاده کنید.</p>${msg ? html`<p class="errors">${msg}</p>` : ''}
-    ${API ? html`<a class="btn primary" href="${API}/auth/login">ورود با GitHub</a>` : html`<p class="errors">VITE_API_URL تنظیم نشده است (به docs/ADMIN.md مراجعه کنید).</p>`}</div>`);
+  mount(root, html`<form class="login panel" data-form="login"><h1>پنل مدیریت</h1>
+    <p class="muted">توکن GitHub خودتان را وارد کنید. توکن فقط در حافظه همین تب می‌ماند و فقط به api.github.com ارسال می‌شود.</p>
+    ${msg ? html`<p class="errors" role="alert">${msg}</p>` : ''}
+    <label>توکن GitHub (Fine-grained)<input type="password" name="token" autocomplete="off" required dir="ltr" /></label>
+    <label>مخزن خصوصی داده (owner/name)<input name="repo" value="${DEFAULT_DATA_REPO}" placeholder="USERNAME/candle-data" required dir="ltr" /></label>
+    <p><button class="btn primary" type="submit">ورود</button></p></form>`);
+}
+async function login(token: string, repo: string) {
+  if (!REPO_RE.test(repo)) throw new Error('نام مخزن باید به شکل owner/name باشد.');
+  creds = { token, repo };
+  try {
+    user = ((await (await gh('/user')).json()) as { login: string }).login;
+    const r = (await (await gh(R())).json()) as { private: boolean; permissions?: { push?: boolean } };
+    if (!r.private) throw new Error('این مخزن عمومی است. داده‌ها باید در یک مخزن خصوصی باشند.');
+    if (!r.permissions?.push) throw new Error('توکن اجازه نوشتن روی این مخزن را ندارد.');
+    await loadAll();
+  } catch (e) { creds = null; user = ''; throw e; }
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(creds));
 }
 
 /* ---------- actions ---------- */
@@ -201,7 +294,7 @@ const syncHome = () => { const f = $<HTMLFormElement>('form[data-form=home]'); i
 const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
   tab: (el) => { tab = el.dataset.id as Tab; editing = null; hp = null; errors = []; paint(); },
   reload: async () => { await loadAll(); hp = null; editing = null; errors = []; paint(); note('بازخوانی شد.'); },
-  logout: async () => { await api('/auth/logout', { method: 'POST' }); user = ''; loginView(); },
+  logout: () => { creds = null; user = ''; sessionStorage.removeItem(SESSION_KEY); previews.forEach((u) => URL.revokeObjectURL(u)); previews.clear(); loginView(); },
   new: () => { editing = { p: newProduct(), isNew: true, orig: [] }; errors = []; paint(); },
   edit: (el) => { const p = db.products!.content.find((x) => x.id === el.dataset.id); if (p) { editing = { p: structuredClone(p), isNew: false, orig: [...p.images] }; errors = []; paint(); } },
   cancel: () => { editing = null; errors = []; paint(); },
@@ -212,7 +305,7 @@ const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
     await save('products', db.products!.content.filter((x) => x.id !== id));
     const hpd = db.homepage!.content;
     if (hpd.featuredIds.includes(id)) await save('homepage', { ...hpd, featuredIds: hpd.featuredIds.filter((x) => x !== id) });
-    await Promise.all(p.images.filter((i) => !i.endsWith('.svg')).map((i) => api('/api/images', { method: 'DELETE', body: JSON.stringify({ path: i }) }).catch(() => undefined)));
+    await Promise.all(p.images.filter((i) => !i.endsWith('.svg')).map((i) => removeImage(i)));
     paint(); note('محصول حذف شد. انتشار سایت چند دقیقه طول می‌کشد.');
   },
   addcat: () => { const l = db.categories!.content; l.push({ id: `category-${l.length + 1}`, name: 'دسته جدید' }); paint(); },
@@ -248,6 +341,11 @@ root.addEventListener('submit', (e) => {
   (async () => {
     errors = [];
     const kind = f.dataset.form;
+    if (kind === 'login') {
+      try { await login(val(f, 'token').trim(), val(f, 'repo').trim()); paint(); }
+      catch (e) { loginView(e instanceof Error ? e.message : 'ورود ناموفق بود.'); }
+      return;
+    }
     if (kind === 'product' && editing) {
       const p = readProduct(f, editing.p);
       if (p.discountPrice === null || Number.isNaN(p.discountPrice)) p.discountPrice = null;
@@ -256,7 +354,7 @@ root.addEventListener('submit', (e) => {
       if (errors.length) return paint();
       await save('products', list);
       const gone = editing.orig.filter((i) => !p.images.includes(i) && !i.endsWith('.svg'));
-      await Promise.all(gone.map((i) => api('/api/images', { method: 'DELETE', body: JSON.stringify({ path: i }) }).catch(() => undefined)));
+      await Promise.all(gone.map((i) => removeImage(i)));
       editing = null; paint(); note('ذخیره شد. انتشار سایت چند دقیقه طول می‌کشد.');
     } else if (kind === 'cats') {
       const list: Category[] = db.categories!.content.map((_, i) => {
@@ -293,16 +391,11 @@ root.addEventListener('submit', (e) => {
 });
 
 async function init() {
-  if (!API) return loginView();
   try {
-    user = (await api<{ login: string }>('/auth/me')).login;
-    await loadAll();
-    paint();
-  } catch (e) {
-    user = '';
-    const denied = location.hash === '#denied';
-    loginView(denied ? 'این حساب GitHub اجازه دسترسی ندارد.' : e instanceof ApiError && e.status !== 401 ? e.message : '');
-  }
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null') as { token?: string; repo?: string } | null;
+    if (saved?.token && saved.repo) { await login(saved.token, saved.repo); paint(); return; }
+  } catch { sessionStorage.removeItem(SESSION_KEY); }
+  loginView();
 }
 void init();
 void IMG_RE; void $$;

@@ -5,6 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Minimum permissions. No secrets are used by this workflow.
 permissions:
   contents: read
   pages: write
@@ -17,13 +18,30 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      DATA_REPO: ${{ secrets.DATA_REPO }}
     steps:
       - uses: actions/checkout@v4
+      # Private data repo (secrets DATA_REPO = owner/name, DATA_REPO_TOKEN = fine-grained PAT, Contents: read)
+      - name: Fetch private data repo
+        if: env.DATA_REPO != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: _data
+          persist-credentials: false
+      - name: Merge private data into the build
+        if: env.DATA_REPO != ''
+        run: |
+          cp -r _data/data/. public/data/
+          if [ -d _data/images ]; then cp -r _data/images/. public/images/; fi
+          rm -rf _data
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - run: npm install
-      - name: Set GitHub Pages base path and URL
+      - name: Compute base path and site URL
         run: |
           REPO="${GITHUB_REPOSITORY#*/}"
           OWNER="${GITHUB_REPOSITORY_OWNER}"
@@ -34,12 +52,18 @@ jobs:
             echo "BASE_PATH=/${REPO}/" >> "$GITHUB_ENV"
             echo "SITE_URL=https://${OWNER}.github.io/${REPO}" >> "$GITHUB_ENV"
           fi
-      - run: npm run typecheck
-      - run: npm run validate:data
-      - run: npm test
-      - run: npm run build
+      - name: Type check
+        run: npm run typecheck
+      - name: Validate JSON data
+        run: npm run validate:data
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
         env:
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          # Public values (repository Variables, not Secrets)
+          VITE_SITE_REPO: ${{ github.repository }}
+          VITE_DATA_REPO: ${{ vars.DATA_REPO_NAME }}
           VITE_TELEGRAM_USERNAME: ${{ vars.VITE_TELEGRAM_USERNAME }}
       - uses: actions/upload-pages-artifact@v3
         with:

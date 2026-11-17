@@ -1,22 +1,13 @@
-# Admin guide
+# Admin guide (GitHub-only, no worker)
 
-## Create the OAuth App
-GitHub → Settings → Developer settings → OAuth Apps → New. Homepage: your site URL. Callback: `https://<worker-domain>/auth/callback`. Copy the Client ID; generate a Client Secret (store it only as a worker secret).
+## One-time setup
+1. **Private data repo**: create `USERNAME/candle-data` (Private). Upload `data-repo-template/data` and `data-repo-template/images` to its root.
+2. **Build token** (read-only): Settings → Developer settings → Fine-grained tokens → only `candle-data`, **Contents: Read-only**. In the *site* repo: Settings → Secrets and variables → Actions → Secrets:
+   - `DATA_REPO` = `USERNAME/candle-data`
+   - `DATA_REPO_TOKEN` = that token
+   Secrets are readable only by the workflow at build time; they never reach the browser.
+3. **Admin token** (yours, read/write): fine-grained token for `candle-data` (**Contents: Read and write**) and the site repo (**Actions: Read and write**). Set an expiry.
 
-## Repository token
-Settings → Developer settings → Fine-grained tokens → select **only this repository**, permission **Contents: Read and write**, nothing else. Set an expiry and rotate it.
-
-## Worker
-```bash
-cd serverless/auth-and-github-api
-npx wrangler deploy
-npx wrangler secret put GITHUB_CLIENT_ID
-npx wrangler secret put GITHUB_CLIENT_SECRET
-npx wrangler secret put SESSION_SECRET      # 32+ random chars (openssl rand -base64 48)
-npx wrangler secret put GITHUB_REPO_TOKEN
-```
-Edit `wrangler.toml` vars: `ALLOWED_USERS` (comma-separated logins), `ALLOWED_ORIGIN` (`https://USER.github.io`, no path), `ADMIN_URL`, `GITHUB_REPO`.
-Recommended: add a Cloudflare rate-limiting rule for `/api/*` and `/auth/*`.
-
-## Using the panel
-Open `/admin/`, sign in with GitHub. Only allowlisted logins get a session (8 hours, then sign in again). Each save is a commit; the site redeploys automatically. Real customer reviews only — the testimonials list ships empty on purpose.
+## Daily use
+Open `https://USERNAME.github.io/REPOSITORY/admin/`, paste the admin token and `USERNAME/candle-data`. Saving commits to the private repo and dispatches the deploy workflow; the live site updates in a few minutes. If the build fails validation, the previous version stays live.
+The token stays in this tab's memory/sessionStorage only; "Exit" or closing the tab clears it. Real customer reviews only: testimonials ship empty.

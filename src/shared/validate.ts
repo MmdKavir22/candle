@@ -1,4 +1,4 @@
-// Pure validation shared by the admin UI, the serverless API, CI and tests.
+// Pure validation shared by the admin UI, CI and tests.
 import { GROUP_KEYS } from './types';
 
 type R = Record<string, unknown>;

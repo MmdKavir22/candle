@@ -1,0 +1,28 @@
+@import '../styles/tokens.css';
+.wrap { width: min(1100px, 100% - 2rem); margin-inline: auto; }
+.top { background: var(--surface); border-bottom: 1px solid var(--border); }
+.top .wrap { display: flex; align-items: center; gap: 1rem; min-height: 64px; flex-wrap: wrap; }
+.top strong { font-size: 1.1rem; }
+.top .sp { margin-inline-start: auto; }
+.tabs { display: flex; gap: .4rem; flex-wrap: wrap; padding-block: 1rem; }
+.tabs button { min-height: 40px; padding: 0 1.1rem; border-radius: 99px; border: 1px solid var(--border); background: #fff; font: 600 .9rem var(--font); cursor: pointer; }
+.tabs button[aria-current=true] { background: var(--accent-ink); color: #fff; border-color: var(--accent-ink); }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 1.25rem; margin-bottom: 1rem; box-shadow: var(--shadow); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
+.stat b { display: block; font-size: 1.9rem; }
+.grid2 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: start; padding: .6rem .4rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.row-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.thumb { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: var(--secondary); }
+.imgrow { display: grid; grid-template-columns: 72px 1fr auto; gap: .75rem; align-items: center; margin-bottom: .6rem; }
+.imgrow img { width: 72px; height: 72px; object-fit: cover; border-radius: 12px; }
+.errors { background: #fbecee; border: 1px solid #e9c3c8; color: #7a2a35; border-radius: var(--r-sm); padding: .8rem 1rem; margin-bottom: 1rem; }
+.errors ul { margin: .3rem 0 0; padding-inline-start: 1.2rem; }
+#msg { position: fixed; bottom: 1rem; inset-inline: 1rem; margin-inline: auto; width: fit-content; max-width: 92vw; padding: .7rem 1.2rem; border-radius: 99px; background: var(--text); color: #fff; z-index: 50; }
+#msg[hidden] { display: none; }
+#msg.err { background: var(--danger); }
+.login { max-width: 460px; margin: 12vh auto; text-align: center; }
+.chk { display: flex; flex-direction: row; align-items: center; gap: .5rem; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .4rem; }
+textarea.code { font-family: ui-monospace, Menlo, monospace; direction: ltr; min-height: 180px; font-size: .85rem; }

@@ -5,7 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Minimum permissions. No secrets are used by this workflow.
 permissions:
   contents: read
   pages: write
@@ -23,9 +22,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      - name: Compute base path and site URL
+      - run: npm install
+      - name: Set GitHub Pages base path and URL
         run: |
           REPO="${GITHUB_REPOSITORY#*/}"
           OWNER="${GITHUB_REPOSITORY_OWNER}"
@@ -36,16 +34,11 @@ jobs:
             echo "BASE_PATH=/${REPO}/" >> "$GITHUB_ENV"
             echo "SITE_URL=https://${OWNER}.github.io/${REPO}" >> "$GITHUB_ENV"
           fi
-      - name: Type check
-        run: npm run typecheck
-      - name: Validate JSON data
-        run: npm run validate:data
-      - name: Tests
-        run: npm test
-      - name: Build
-        run: npm run build
+      - run: npm run typecheck
+      - run: npm run validate:data
+      - run: npm test
+      - run: npm run build
         env:
-          # Public values (repository Variables, not Secrets)
           VITE_API_URL: ${{ vars.VITE_API_URL }}
           VITE_TELEGRAM_USERNAME: ${{ vars.VITE_TELEGRAM_USERNAME }}
       - uses: actions/upload-pages-artifact@v3

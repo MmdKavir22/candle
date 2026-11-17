@@ -126,3 +126,39 @@ footer ul { list-style: none; padding: 0; margin: 0; display: grid; gap: .3rem; 
 /* static prerendered product pages */
 .static-product { max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
 .static-product img { border-radius: var(--r-lg); margin-bottom: 1rem; }
+
+/* ---------- motion (all disabled by prefers-reduced-motion) ---------- */
+.reveal { opacity: 0; transform: translateY(20px); transition: opacity .7s ease, transform .7s cubic-bezier(.2, .7, .2, 1); transition-delay: var(--d, 0ms); }
+.reveal.in { opacity: 1; transform: none; }
+.page-in { animation: pagein .5s ease both; }
+@keyframes pagein { from { opacity: 0; transform: translateY(10px); } }
+.site-header { transition: box-shadow .3s, background .3s; }
+.site-header.scrolled { box-shadow: 0 8px 24px -16px rgba(60, 120, 145, .5); }
+.hero { position: relative; isolation: isolate; }
+.hero::before { content: ''; position: absolute; z-index: -1; inset: 0 auto auto -8%; width: 55%; aspect-ratio: 1; background: radial-gradient(closest-side, rgba(169, 214, 229, .55), transparent); filter: blur(12px); animation: drift 14s ease-in-out infinite alternate; }
+.hero::after { content: ''; position: absolute; z-index: -1; inset: auto -6% 0 auto; width: 34%; aspect-ratio: 1; background: radial-gradient(closest-side, rgba(255, 233, 184, .55), transparent); filter: blur(16px); animation: drift 11s ease-in-out infinite alternate-reverse; }
+@keyframes drift { to { transform: translate(40px, 24px) scale(1.12); } }
+.hero h1, .hero p, .hero-cta { animation: rise .9s cubic-bezier(.2, .7, .2, 1) both; }
+.hero p { animation-delay: .12s; }
+.hero-cta { animation-delay: .24s; }
+@keyframes rise { from { opacity: 0; transform: translateY(24px); } }
+.hero-art { animation: float 8s ease-in-out infinite alternate; }
+@keyframes float { to { transform: translateY(-10px); } }
+.card { transition: transform .35s cubic-bezier(.2, .7, .2, 1), box-shadow .35s; }
+.card:hover { transform: translateY(-6px); box-shadow: 0 24px 40px -20px rgba(60, 120, 145, .55); }
+.card-media img, .cat img { transition: transform .8s cubic-bezier(.2, .7, .2, 1); }
+.card:hover .card-media img, .cat:hover img { transform: scale(1.06); }
+.cat, .banner, .panel { transition: transform .3s, box-shadow .3s; }
+.cat:hover, .banner:hover { transform: translateY(-4px); box-shadow: var(--shadow); }
+.btn { transition: background .2s, box-shadow .2s, transform .15s; }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: scale(.97); }
+.nav a { transition: background .2s; }
+.count.bump { animation: bump .45s ease; }
+@keyframes bump { 40% { transform: scale(1.45); } }
+dialog[open] { animation: pop .3s cubic-bezier(.2, .7, .2, 1); }
+dialog[open]::backdrop { animation: fade .3s; }
+@keyframes pop { from { opacity: 0; transform: scale(.94) translateY(10px); } }
+@keyframes fade { from { opacity: 0; } }
+details[open] > p { animation: fade .35s; }
+@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } }

@@ -2,6 +2,7 @@ import { breadcrumbs, productCard } from '../components/ui';
 import { filterProducts, type Filters } from '../utils/catalog';
 import { html, $, mount } from '../utils/dom';
 import { faNum } from '../utils/format';
+import { reveal } from '../utils/motion';
 import type { PageFn } from './types';
 
 export const shop: PageFn = ({ products, categories, settings: s }, route) => {
@@ -38,6 +39,7 @@ export const shop: PageFn = ({ products, categories, settings: s }, route) => {
         const qs = p.toString();
         history.replaceState(null, '', `#/shop${qs ? `?${qs}` : ''}`);
         mount($('#results', root)!, results(x));
+        reveal($('#results', root)!);
       };
       form.addEventListener('input', update, { signal });
       form.addEventListener('submit', (e) => e.preventDefault(), { signal });

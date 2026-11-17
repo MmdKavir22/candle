@@ -7,9 +7,11 @@ A Persian (RTL), pastel-blue showcase store for handmade candles. Customers brow
 - Cart persisted in `localStorage` (only product IDs and quantities)
 - **Telegram order**: builds a Persian summary, copies it to the clipboard, opens `https://t.me/<username>`. The customer must paste and send it — the site never claims a message was sent. A "copy summary" button is always available.
 - Custom candle request page with live summary, optional price estimate, local-only image preview
-- Admin (`/admin/`): sign in with your GitHub token; edit products, categories, homepage and settings; images are optimised to WebP in the browser; data is committed to a **private** repo and the site is rebuilt automatically
+- Admin (`/admin/`): dashboard with stats, site-health checklist, deploy status, category chart and JSON backup; product search/filter/sort, availability switch, duplicate, image reorder, live product preview with Google-snippet and SEO tips, Ctrl+S, unsaved-changes guard; sign in with your GitHub token; edit products, categories, homepage and settings; images are optimised to WebP in the browser; data is committed to a **private** repo and the site is rebuilt automatically
 - SEO: static meta, canonical, Open Graph/Twitter, JSON-LD (Organization, WebSite, Product, Offer, BreadcrumbList), sitemap, robots.txt, pre-rendered product pages
 - Stack: HTML5, CSS3, TypeScript (strict), Vite, GitHub Actions, JSON data. No PHP, Python, database or paid backend.
+
+- Subtle motion: scroll-reveal, hero glow/float, card hover, cart-badge bump, page transitions (all disabled for `prefers-reduced-motion`)
 
 ## Local development
 ```bash

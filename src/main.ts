@@ -5,6 +5,7 @@ import { markActive, renderLayout, setCount } from './components/layout';
 import { toast } from './components/ui';
 import { loadCatalog, type Catalog } from './services/data';
 import { html, mount, $ } from './utils/dom';
+import { reveal, watchHeader } from './utils/motion';
 import { asset, money, unitPrice } from './utils/format';
 import { cartPage } from './pages/cart';
 import { custom } from './pages/custom';
@@ -40,7 +41,11 @@ function render(scroll = true) {
   page.mount?.(app, ac.signal);
   setMeta(page.title, page.desc);
   markActive(key);
-  if (scroll) { window.scrollTo(0, 0); app.focus({ preventScroll: true }); }
+  if (scroll) {
+    window.scrollTo(0, 0); app.focus({ preventScroll: true });
+    app.classList.remove('page-in'); void app.offsetWidth; app.classList.add('page-in');
+    reveal(app);
+  }
 }
 
 function quickView(id: string) {
@@ -65,6 +70,7 @@ document.addEventListener('click', (e) => {
   if (dlg?.open && (t.closest('[data-close]') || t === dlg)) dlg.close();
 });
 
+
 async function start() {
   try {
     ctx = await loadCatalog();
@@ -73,6 +79,7 @@ async function start() {
     return;
   }
   renderLayout(ctx.settings);
+  watchHeader();
   setCount(cart.count());
   cart.subscribe(() => {
     setCount(cart.count());

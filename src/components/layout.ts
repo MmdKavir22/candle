@@ -42,5 +42,8 @@ export function markActive(key: string) {
 }
 export function setCount(n: number) {
   const el = $('#cart-count');
-  if (el) el.textContent = faNum(n);
+  if (!el) return;
+  const changed = el.textContent !== faNum(n);
+  el.textContent = faNum(n);
+  if (changed) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
 }

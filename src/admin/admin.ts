@@ -4,7 +4,7 @@ import type { Category, DataName, Homepage, Product, Settings } from '../shared/
 import { validateCategories, validateHomepage, validateProduct, validateProducts, validateSettings, IMG_RE } from '../shared/validate';
 import { html, mount, raw, $, $$, type Safe } from '../utils/dom';
 import { asset, dateFa, faNum, money, onSale, slugify, unitPrice } from '../utils/format';
-import { normFa } from '../utils/catalog';
+import { filterProducts, type Filters } from '../utils/catalog';
 
 const SITE_REPO = import.meta.env.VITE_SITE_REPO ?? '';
 const DEFAULT_DATA_REPO = import.meta.env.VITE_DATA_REPO ?? '';
@@ -68,17 +68,6 @@ let editing: { p: Product; isNew: boolean; orig: string[] } | null = null;
 let hp: Homepage | null = null;
 let errors: string[] = [];
 let pendingWarn = '';
-let q = '', fcat = '', sortBy: 'name' | 'price' | 'new' = 'name';
-let lastRun: { status: string; conclusion: string | null; url: string; date: string } | null = null;
-async function loadRun() {
-  if (!SITE_REPO) return;
-  try {
-    const j = (await (await gh(`/repos/${SITE_REPO}/actions/runs?per_page=1&branch=main`)).json()) as { workflow_runs: { status: string; conclusion: string | null; html_url: string; created_at: string }[] };
-    const r = j.workflow_runs[0];
-    lastRun = r ? { status: r.status, conclusion: r.conclusion, url: r.html_url, date: r.created_at } : null;
-  } catch { /* needs Actions: read; optional */ }
-}
-
 let mt = 0;
 function note(m: string, err = false) {
   const el = $('#msg') ?? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'msg', role: 'status' }));
@@ -118,7 +107,7 @@ async function loadAll() {
     }
     (db as Record<string, unknown>)[n] = { content: JSON.parse(f.text), sha: f.sha };
   }
-  await Promise.all([loadHistory(), loadRun()]);
+  await Promise.all([loadHistory(), loadDeploy()]);
 }
 /** Ask the public site repo to rebuild so changes go live (needs Actions: write on the site repo). */
 async function publish() {
@@ -131,7 +120,7 @@ async function save(name: DataName, content: unknown) {
   const sha = await putFile(`data/${name}.json`, toB64(JSON.stringify(content, null, 2) + '\n'), `admin(${user}): update ${name}.json`, doc.sha);
   (db as Record<string, unknown>)[name] = { content, sha };
   await Promise.all([loadHistory(), publish()]);
-  setTimeout(async () => { await loadRun(); if (tab === 'overview' && !editing && user) paint(); }, 5000);
+  setTimeout(() => { void loadDeploy().then(() => { if (tab === 'overview' && !editing && user) paint(); }); }, 5000);
 }
 
 /* ---------- private-repo image previews ---------- */
@@ -453,21 +442,6 @@ const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
     await Promise.all(p.images.filter((i) => !i.endsWith('.svg')).map((i) => removeImage(i)));
     paint(); note('محصول حذف شد. انتشار سایت چند دقیقه طول می‌کشد.');
   },
-  dup: (el) => {
-    const o = db.products!.content.find((x) => x.id === el.dataset.id);
-    if (!o) return;
-    let id = `${o.id}-copy`; let n = 2;
-    while (db.products!.content.some((x) => x.id === id)) id = `${o.id}-copy-${n++}`;
-    editing = { p: { ...structuredClone(o), id, name: `${o.name} (کپی)`, isNew: true, available: false, createdAt: new Date().toISOString() }, isNew: true, orig: [] };
-    errors = []; paint();
-  },
-  deploy: async () => { pendingWarn = ''; await publish(); await loadRun(); paint(); note('درخواست انتشار ارسال شد.'); },
-  backup: () => {
-    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), products: db.products!.content, categories: db.categories!.content, homepage: db.homepage!.content, settings: db.settings!.content }, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `candle-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000); note('فایل پشتیبان دانلود شد.');
-  },
   toggle: async (el) => {
     await save('products', db.products!.content.map((p) => (p.id === el.dataset.id ? { ...p, available: !p.available } : p)));
     paint(); note('وضعیت موجودی تغییر کرد.');
@@ -521,22 +495,6 @@ root.addEventListener('change', (e) => {
     } else { syncHome(); const b = hp!.banners[Number(inp.dataset.id)]; if (b) b.image = await upload(file, 'banners', b.title); }
     paint(); note('تصویر بارگذاری شد. با ذخیره فرم، تغییر نهایی می‌شود.');
   })().catch(fail);
-});
-
-root.addEventListener('input', (e) => {
-  const t = e.target as HTMLInputElement;
-  if (t.dataset.f) {
-    if (t.dataset.f === 'q') q = t.value; else if (t.dataset.f === 'cat') fcat = t.value; else sortBy = t.value as typeof sortBy;
-    mount($('#prow')!, productRows()); hydrate(); return;
-  }
-  const f = t.closest<HTMLFormElement>('form[data-form=product]');
-  if (f && editing) { mount($('#pv')!, pvCard(readProduct(f, editing.p))); hydrate(); }
-});
-document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-    const f = $<HTMLFormElement>('form[data-form=product], form[data-form=home], form[data-form=settings]');
-    if (f) { e.preventDefault(); f.requestSubmit(); }
-  }
 });
 
 root.addEventListener('submit', (e) => {

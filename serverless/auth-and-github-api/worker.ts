@@ -44,7 +44,7 @@ const b64u = (buf: ArrayBuffer | Uint8Array) => {
 };
 const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
 const rand = (n: number) => b64u(crypto.getRandomValues(new Uint8Array(n)));
-const hmacKey = (secret: string, usage: KeyUsage[]) => crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, usage);
+const hmacKey = (secret: string, usage: ('sign' | 'verify')[]) => crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, usage);
 
 async function signToken(env: Env, payload: object) {
   const body = b64u(enc.encode(JSON.stringify(payload)));

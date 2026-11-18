@@ -162,3 +162,17 @@ dialog[open]::backdrop { animation: fade .3s; }
 @keyframes fade { from { opacity: 0; } }
 details[open] > p { animation: fade .35s; }
 @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } }
+
+/* ---------- banner, wallpaper, checkout ---------- */
+.top-banner { background: var(--bn-bg, #a9d6e5); color: var(--bn-fg, #263746); font-weight: 600; font-size: .92rem; }
+.top-banner .wrap { display: flex; align-items: center; justify-content: center; gap: .75rem; min-height: 40px; position: relative; padding-inline: 2rem; text-align: center; }
+.top-banner a { color: inherit; }
+.top-banner button { position: absolute; inset-inline-end: 0; width: 36px; height: 36px; border: 0; background: none; color: inherit; font-size: 1.3rem; cursor: pointer; border-radius: 50%; }
+.has-wallpaper { background-size: cover; background-position: center; background-attachment: fixed; }
+@media (max-width: 800px) { .has-wallpaper { background-attachment: scroll; } }
+.co { display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); }
+.co[hidden] { display: none; }
+.hp { position: absolute; inset-inline-start: -9999px; width: 1px; height: 1px; opacity: 0; }
+.done { text-align: center; max-width: 640px; margin-inline: auto; }
+.done .summary-box { text-align: start; margin-block: 1rem; }
+.done .hero-cta { justify-content: center; }

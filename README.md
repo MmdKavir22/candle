@@ -13,6 +13,11 @@ A Persian (RTL), pastel-blue showcase store for handmade candles. Customers brow
 
 - Subtle motion: scroll-reveal, hero glow/float, card hover, cart-badge bump, page transitions (all disabled for `prefers-reduced-motion`)
 
+- **Saved orders**: checkout form → order stored in the private repo (`orders/YYYY-MM/<id>.json`) through a tiny Cloudflare Worker → customizable Persian message (template placeholders) the customer copies/sends in Telegram. Admin has an **Orders** tab (status, notes, message copy, CSV export). Without the worker the cart keeps its original Telegram-only flow.
+- **Site appearance (admin → Settings)**: top announcement banner, wallpaper (upload or https URL) with readability overlay, order-message template with live preview.
+- **Images**: upload for products, categories, banners and wallpaper (stored in the private repo) or valid external `https://` image URLs.
+- **Sync indicator**: the admin compares the private repo with what the live site serves and offers a one-click publish.
+
 ## Local development
 ```bash
 node -v            # 20+
@@ -45,6 +50,9 @@ Full steps in [docs/ADMIN.md](docs/ADMIN.md). Summary:
 3. Create your own admin token (fine-grained, repos: data repo + this site repo; **Contents: Read and write** on the data repo, **Actions: Read and write** on the site repo).
 4. Open `/admin/`, paste that token and the data repo name. Every save commits to the private repo and triggers a new deploy.
 
+### Orders service (Cloudflare Worker)
+The public site cannot hold a token, so `serverless/orders-api` receives orders and writes one file per order into the private repo. Details in [docs/ADMIN.md](docs/ADMIN.md#orders-worker). Set the repo variable `ORDERS_API_URL` to the worker URL and redeploy.
+
 ## Product management
 The catalog lives in the private data repo: `data/products.json`, `categories.json`, `homepage.json`, `settings.json`, and `images/{products,banners,categories}`. The admin validates input, commits with file-SHA checks (no overwriting concurrent edits), then dispatches the deploy workflow. The site repo's `public/data/` holds only sample data used when no `DATA_REPO` secret is set. Note: the published storefront is public by nature, so product data you publish is visible to visitors; only the repository itself is private.
 
@@ -60,6 +68,8 @@ See [docs/SECURITY.md](docs/SECURITY.md).
 | Blank page / 404 for CSS/JS | `BASE_PATH` wrong; must be `/REPOSITORY/` |
 | Admin login says token has no access | Token must include the data repo with Contents: Read and write |
 | "مخزن عمومی است" | The data repo must be private |
+| Order form says connection failed | `ORDERS_API_URL` missing/wrong, or worker `ALLOWED_ORIGIN` differs from the site origin |
+| Category won't save | Names must be non-empty and unique; IDs are generated automatically; a category with products can't be deleted |
 | Saved but not published | Token needs Actions: Read and write on the site repo, or run the deploy workflow manually |
 | 409 / concurrent change | Press Reload in the admin and redo the edit |
 | Image rejected | JPG/PNG/WebP only; ≤ 2 MB after optimisation |

@@ -19,6 +19,9 @@ jobs:
       - run: npm install
       - name: TypeScript
         run: npm run typecheck
+      - name: TypeScript (orders worker, non-blocking until first verified)
+        run: npm run typecheck:worker
+        continue-on-error: true
       - name: JSON data validation
         run: npm run validate:data
       - name: Tests

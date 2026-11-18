@@ -44,6 +44,10 @@ export interface Settings {
   currency: string;
   shippingInfo: string;
   seo: { priceCurrency: string; priceMultiplier: number };
+  /** Optional blocks (older settings.json files without them stay valid). */
+  orders?: { enabled: boolean; requireAddress: boolean; messageTemplate: string };
+  banner?: { enabled: boolean; text: string; link: string; bg: string; color: string };
+  wallpaper?: { enabled: boolean; image: string; color: string; overlay: number };
   customOrder: {
     enabled: boolean;
     basePrice: number;

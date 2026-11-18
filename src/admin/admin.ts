@@ -1,7 +1,10 @@
 import '@fontsource-variable/vazirmatn';
 import './admin.css';
 import type { Category, DataName, Homepage, Product, Settings } from '../shared/types';
-import { validateCategories, validateHomepage, validateProduct, validateProducts, validateSettings, IMG_RE } from '../shared/validate';
+import { validateCategories, validateHomepage, validateProduct, validateProducts, validateSettings, validators, isImageRef, IMG_RE } from '../shared/validate';
+import { DEFAULT_TEMPLATE, ORDER_STATUSES, STATUS_LABEL, renderOrderMessage, type Order, type OrderStatus } from '../shared/order';
+import { makeFmt } from '../services/orders';
+import { copyText, telegramUrl } from '../services/telegram';
 import { html, mount, raw, $, $$, type Safe } from '../utils/dom';
 import { asset, dateFa, faNum, money, onSale, slugify, unitPrice } from '../utils/format';
 import { filterProducts, type Filters } from '../utils/catalog';
@@ -62,11 +65,18 @@ interface Commit { message: string; date: string; author: string }
 const db: { products?: Doc<Product[]>; categories?: Doc<Category[]>; homepage?: Doc<Homepage>; settings?: Doc<Settings> } = {};
 let history: Commit[] = [];
 let user = '';
-type Tab = 'overview' | 'products' | 'homepage' | 'settings';
+type Tab = 'overview' | 'products' | 'orders' | 'homepage' | 'settings';
 let tab: Tab = 'overview';
 let editing: { p: Product; isNew: boolean; orig: string[] } | null = null;
 let hp: Homepage | null = null;
 let errors: string[] = [];
+let branch = 'main';
+let cd: Category[] | null = null; // category form draft: nothing touches saved data until you press save
+type OrderRec = { order: Order; sha: string; path: string };
+let orders: OrderRec[] | null = null;
+let orderOpen: string | null = null;
+let of = { status: '', q: '' };
+let syncInfo: { changed: number } | null = null;
 let pendingWarn = '';
 let mt = 0;
 function note(m: string, err = false) {
@@ -84,13 +94,14 @@ async function loadHistory() {
   } catch { /* history is optional */ }
 }
 /** Starter content for a file missing from the private repo: the site's bundled sample, minus references to files that don't exist there. */
+/** Migration source for a file missing in the private repo: what the live site publishes today (validated). Nothing is ever overwritten. */
 async function defaultFor(n: DataName): Promise<unknown> {
-  if (n === 'products') return [];
-  const r = await fetch(asset(`data/${n}.json`));
-  if (!r.ok) throw new ApiError(0, `نمونه اولیه ${n}.json در سایت پیدا نشد.`);
-  const d = (await r.json()) as Record<string, unknown>;
-  if (n === 'homepage') { d.featuredIds = []; d.banners = []; }
-  return d;
+  try {
+    const r = await fetch(asset(`data/${n}.json`), { cache: 'no-store' });
+    if (r.ok) { const d: unknown = await r.json(); if (validators[n](d).length === 0) return d; }
+  } catch { /* fall through to minimal defaults */ }
+  if (n === 'products' || n === 'categories') return [];
+  throw new ApiError(0, `داده اولیه ${n}.json پیدا نشد؛ محتوای پوشه data-repo-template را در مخزن داده آپلود کنید.`);
 }
 let createdFiles: string[] = [];
 async function loadAll() {
@@ -102,12 +113,14 @@ async function loadAll() {
       const content = await defaultFor(n);
       const text = JSON.stringify(content, null, 2) + '\n';
       const sha = await putFile(`data/${n}.json`, toB64(text), `admin(${user}): create ${n}.json`);
-      f = { sha, text };
+      const back = await getFile(`data/${n}.json`); // verify the migrated copy before the app switches to it
+      if (!back || JSON.stringify(JSON.parse(back.text)) !== JSON.stringify(content)) throw new ApiError(0, `تأیید مهاجرت ${n}.json ناموفق بود؛ هیچ داده‌ای حذف نشد.`);
+      f = { sha, text: back.text };
       createdFiles.push(`${n}.json`);
     }
     (db as Record<string, unknown>)[n] = { content: JSON.parse(f.text), sha: f.sha };
   }
-  await Promise.all([loadHistory(), loadDeploy()]);
+  await Promise.all([loadHistory(), loadDeploy(), checkSync()]);
 }
 /** Ask the public site repo to rebuild so changes go live (needs Actions: write on the site repo). */
 async function publish() {
@@ -120,13 +133,14 @@ async function save(name: DataName, content: unknown) {
   const sha = await putFile(`data/${name}.json`, toB64(JSON.stringify(content, null, 2) + '\n'), `admin(${user}): update ${name}.json`, doc.sha);
   (db as Record<string, unknown>)[name] = { content, sha };
   await Promise.all([loadHistory(), publish()]);
-  setTimeout(() => { void loadDeploy().then(() => { if (tab === 'overview' && !editing && user) paint(); }); }, 5000);
+  setTimeout(() => { void Promise.all([loadDeploy(), checkSync()]).then(() => { if (tab === 'overview' && !editing && user) paint(); }); }, 5000);
 }
 
 /* ---------- private-repo image previews ---------- */
 const MIME: Record<string, string> = { webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', svg: 'image/svg+xml' };
 const previews = new Map<string, string>();
 async function imgSrc(path: string): Promise<string> {
+  if (/^https:\/\//.test(path)) return path;
   const hit = previews.get(path);
   if (hit) return hit;
   try {
@@ -246,7 +260,7 @@ function exportBackup() {
 
 /* ---------- views ---------- */
 function shell(body: Safe): Safe {
-  const T: [Tab, string, string][] = [['overview', '◈', 'نمای کلی'], ['products', '▣', 'محصولات'], ['homepage', '⌂', 'صفحه اصلی'], ['settings', '⚙', 'تنظیمات']];
+  const T: [Tab, string, string][] = [['overview', '◈', 'نمای کلی'], ['products', '▣', 'محصولات'], ['orders', '☰', 'سفارش‌ها'], ['homepage', '⌂', 'صفحه اصلی'], ['settings', '⚙', 'تنظیمات']];
   return html`<div class="app"><aside class="side"><div class="brandmark">🕯 ${db.settings!.content.brandName}<small>پنل مدیریت</small></div>
     <nav aria-label="بخش‌ها">${T.map(([k, i, t]) => html`<button type="button" data-act="tab" data-id="${k}" aria-current="${tab === k}"><span aria-hidden="true">${i}</span>${t}</button>`)}</nav>
     <div class="who"><span class="muted">${user}</span><div class="row-actions"><a class="btn ghost sm" href="${SITE_URL}" target="_blank" rel="noopener">مشاهده سایت ↗</a><button class="btn ghost sm" data-act="reload" type="button">بازخوانی</button><button class="btn ghost sm" data-act="logout" type="button">خروج</button></div></div></aside>
@@ -266,7 +280,7 @@ function overview(): Safe {
     <div class="stats">${stat(faNum(ps.length), 'کل محصولات')}${stat(faNum(ps.filter((p) => p.available).length), 'موجود', 'ok')}${stat(faNum(ps.filter((p) => !p.available).length), 'ناموجود', 'bad')}${stat(faNum(ps.filter((p) => p.featured).length), 'ویژه')}${stat(faNum(ps.filter(onSale).length), 'تخفیف‌دار')}${stat(faNum(avg), `میانگین قیمت (${db.settings!.content.currency})`)}</div>
     <div class="cols2">
       <div class="panel"><h2>انتشار سایت</h2><p><span class="pill ${dep[1]}">${dep[0]}</span> ${deploy ? html`<span class="muted">${dateFa(deploy.at)}</span> <a href="${deploy.url}" target="_blank" rel="noopener">جزئیات ↗</a>` : ''}</p>
-        <div class="row-actions"><button class="btn primary sm" type="button" data-act="deploynow">انتشار دستی</button><button class="btn ghost sm" type="button" data-act="refreshdeploy">بروزرسانی وضعیت</button><button class="btn ghost sm" type="button" data-act="new">+ محصول جدید</button><button class="btn ghost sm" type="button" data-act="export">دانلود پشتیبان JSON</button></div></div>
+        ${syncPill()}<div class="row-actions"><button class="btn primary sm" type="button" data-act="deploynow">انتشار دستی</button><button class="btn ghost sm" type="button" data-act="refreshdeploy">بروزرسانی وضعیت</button><button class="btn ghost sm" type="button" data-act="new">+ محصول جدید</button><button class="btn ghost sm" type="button" data-act="export">دانلود پشتیبان JSON</button></div></div>
       <div class="panel"><h2>توزیع دسته‌بندی‌ها</h2>${counts.map(({ c, n }) => html`<div class="barrow"><span>${c.name}</span><div class="bar"><i style="--w:${Math.round((n / max) * 100)}%"></i></div><b>${faNum(n)}</b></div>`)}</div>
     </div>
     <div class="panel"><h2>چک‌لیست سلامت سایت <span class="muted">(${faNum(okN)} از ${faNum(hs.length)})</span></h2><div class="meter"><i style="--w:${Math.round((okN / hs.length) * 100)}%"></i></div>
@@ -308,10 +322,15 @@ function productsView(): Safe {
       <label>وضعیت<select name="status">${[['', 'همه'], ['in', 'موجود'], ['out', 'ناموجود'], ['feat', 'ویژه'], ['sale', 'تخفیف‌دار']].map(([v, t]) => html`<option value="${v}" ${v === pf.status ? html`selected` : ''}>${t}</option>`)}</select></label>
       <label>مرتب‌سازی<select name="sort">${[['new', 'جدیدترین'], ['name', 'نام'], ['asc', 'ارزان‌ترین'], ['desc', 'گران‌ترین']].map(([v, t]) => html`<option value="${v}" ${v === pf.sort ? html`selected` : ''}>${t}</option>`)}</select></label>
       <button class="btn primary" type="button" data-act="new">+ افزودن محصول</button></form>
-    <div class="panel" id="ptable">${productRows()}</div>
+    ${syncPill()}<div class="panel" id="ptable">${productRows()}</div>
     <form class="panel" data-form="cats"><h2>دسته‌بندی‌ها</h2>
-    ${cats.map((c, i) => html`<div class="grid2"><label>شناسه<input name="cid${i}" value="${c.id}" dir="ltr" /></label><label>نام<input name="cn${i}" value="${c.name}" /></label><label>توضیح<input name="cd${i}" value="${c.description ?? ''}" /></label><label>تصویر<input name="ci${i}" value="${c.image ?? ''}" dir="ltr" /></label></div>`)}
-    <div class="row-actions"><button class="btn ghost sm" type="button" data-act="addcat">افزودن دسته</button><button class="btn primary sm" type="submit">ذخیره دسته‌بندی‌ها</button></div></form>`;
+    ${(cd ?? cats).map((c, i) => html`<div class="catrow"><div class="grid2">
+      <label>نام<input name="cn${i}" value="${c.name}" maxlength="60" required /></label>
+      <label>توضیح<input name="cd${i}" value="${c.description ?? ''}" maxlength="200" /></label>
+      <label>شناسه ${cats.some((x) => x.id === c.id) ? '(ثابت)' : '(خودکار؛ اختیاری)'}<input name="cid${i}" value="${c.id}" dir="ltr" ${cats.some((x) => x.id === c.id) ? html`readonly` : ''} placeholder="از نام ساخته می‌شود" /></label>
+      <label>تصویر (مسیر یا لینک https)<input name="ci${i}" value="${c.image ?? ''}" dir="ltr" /></label></div>
+      <div class="imgrow">${c.image ? html`<img data-p="${c.image}" alt="" />` : html`<span></span>`}<label>بارگذاری تصویر دسته<input type="file" data-upload="cat" data-id="${i}" accept="image/jpeg,image/png,image/webp" /></label><button class="btn danger sm" type="button" data-act="delcat" data-id="${i}">حذف دسته</button></div></div>`)}
+    <div class="row-actions"><button class="btn ghost sm" type="button" data-act="addcat">+ افزودن دسته</button><button class="btn primary sm" type="submit">ذخیره دسته‌بندی‌ها</button></div></form>`;
 }
 
 function previewPanel(p: Product): Safe {
@@ -344,6 +363,7 @@ function productForm(): Safe {
     <h3>تصاویر (۱ تا ۸؛ اولی تصویر اصلی است)</h3>
     ${p.images.map((src, i) => html`<div class="imgrow"><img data-p="${src}" alt="" /><label>متن جایگزین (alt)<input name="alt${i}" value="${p.imageAlts?.[i] ?? ''}" maxlength="160" /></label><div class="row-actions">${i > 0 ? html`<button class="btn ghost sm" type="button" data-act="mainimg" data-id="${i}">اصلی</button><button class="btn ghost sm" type="button" data-act="upimg" data-id="${i}" aria-label="بالا">↑</button>` : ''}${i < p.images.length - 1 ? html`<button class="btn ghost sm" type="button" data-act="downimg" data-id="${i}" aria-label="پایین">↓</button>` : ''}<button class="btn danger sm" type="button" data-act="rmimg" data-id="${i}">حذف</button></div></div>`)}
     <label>افزودن تصویر (JPG, PNG, WebP)<input type="file" data-upload="product" accept="image/jpeg,image/png,image/webp" /></label>
+    <div class="urlrow"><label>یا لینک تصویر (https://)<input name="imgurl" dir="ltr" placeholder="https://example.com/photo.jpg" /></label><button class="btn ghost sm" type="button" data-act="addurl">افزودن لینک</button></div>
     <div class="row-actions sticky"><button class="btn primary" type="submit">ذخیره محصول (Ctrl+S)</button><button class="btn ghost" type="button" data-act="cancel">انصراف</button></div></form>
   <aside class="pvwrap"><div class="panel" id="pv"><h3>پیش‌نمایش زنده</h3>${previewPanel(p)}</div></aside></div>`;
 }
@@ -377,6 +397,21 @@ function settingsView(): Safe {
     ${field('ایمیل', 'email', s.contact.email)}${field('تلفن', 'phone', s.contact.phone)}${field('نشانی', 'address', s.contact.address)}
     <label>اینستاگرام (https://)<input name="instagram" value="${s.social.instagram ?? ''}" dir="ltr" /></label><label>کانال تلگرام (https://)<input name="telegramChannel" value="${s.social.telegramChannel ?? ''}" dir="ltr" /></label><label>پینترست (https://)<input name="pinterest" value="${s.social.pinterest ?? ''}" dir="ltr" /></label></div>
     <label>توضیح برند<textarea name="brandDescription">${s.brandDescription}</textarea></label><label>اطلاعات ارسال<textarea name="shippingInfo">${s.shippingInfo}</textarea></label>
+    ${(() => {
+      const b = s.banner ?? { enabled: false, text: '', link: '', bg: '#A9D6E5', color: '#263746' };
+      const w = s.wallpaper ?? { enabled: false, image: '', color: '', overlay: 0.7 };
+      const od = s.orders ?? { enabled: true, requireAddress: false, messageTemplate: DEFAULT_TEMPLATE };
+      return html`<h3>اطلاعیه بالای سایت</h3><div class="grid2"><label class="chk"><input type="checkbox" name="bnOn" ${b.enabled ? html`checked` : ''}/>نمایش اطلاعیه</label>${field('متن اطلاعیه', 'bnText', b.text, 'maxlength="200"')}
+        <label>لینک (اختیاری: #/shop یا https://)<input name="bnLink" value="${b.link}" dir="ltr" /></label><label>رنگ پس‌زمینه<input type="color" name="bnBg" value="${b.bg}" /></label><label>رنگ متن<input type="color" name="bnFg" value="${b.color}" /></label></div>
+      <h3>تصویر زمینه سایت</h3><div class="grid2"><label class="chk"><input type="checkbox" name="wpOn" ${w.enabled ? html`checked` : ''}/>فعال</label>
+        <label>تصویر (مسیر یا لینک https)<input name="wpImage" value="${w.image}" dir="ltr" /></label><label>بارگذاری تصویر<input type="file" data-upload="wp" accept="image/jpeg,image/png,image/webp" /></label>
+        <label>رنگ زمینه (اختیاری، #RRGGBB)<input name="wpColor" value="${w.color}" dir="ltr" placeholder="#F7FBFD" /></label><label>شفافیت لایه سفید روی تصویر (خوانایی متن)<input type="range" name="wpOverlay" min="0" max="0.95" step="0.05" value="${w.overlay}" /></label></div>
+      ${w.image ? html`<img class="wpprev" id="wpprev" data-p="${w.image}" alt="" />` : html`<img class="wpprev" id="wpprev" alt="" hidden />`}
+      <h3>ثبت سفارش و پیام</h3><div class="grid2"><label class="chk"><input type="checkbox" name="ordOn" ${od.enabled ? html`checked` : ''}/>ثبت و ذخیره سفارش از سایت</label><label class="chk"><input type="checkbox" name="ordAddr" ${od.requireAddress ? html`checked` : ''}/>نشانی الزامی باشد</label></div>
+      <label>قالب پیام سفارش<textarea class="code" name="ordTpl" maxlength="2000">${od.messageTemplate}</textarea></label>
+      <p class="muted">متغیرها: <bdi dir="ltr">{{code}} {{name}} {{phone}} {{address}} {{items}} {{total}} {{notes}} {{date}} {{brand}}</bdi></p>
+      <div class="summary-box" id="tplprev"></div>`;
+    })()}
     <h3>سفارش سفارشی</h3><div class="grid2"><label class="chk"><input type="checkbox" name="coOn" ${o.enabled ? html`checked` : ''}/>فعال</label>${field('قیمت پایه', 'coBase', o.basePrice)}${field('برچسب بسته‌بندی هدیه', 'giftLabel', o.giftPackaging.label)}${field('هزینه بسته‌بندی هدیه', 'giftExtra', o.giftPackaging.extra)}</div>
     <label>گزینه‌ها (JSON: هر گروه آرایه‌ای از {label, extra})<textarea class="code" name="groups">${JSON.stringify(o.groups, null, 2)}</textarea></label>
     <p><button class="btn primary" type="submit">ذخیره تنظیمات</button></p></form>`;
@@ -384,9 +419,11 @@ function settingsView(): Safe {
 
 function paint() {
   if (!user) return;
-  const body = tab === 'overview' ? overview() : tab === 'products' ? productsView() : tab === 'homepage' ? homeView() : settingsView();
+  const body = tab === 'overview' ? overview() : tab === 'products' ? productsView() : tab === 'orders' ? ordersView() : tab === 'homepage' ? homeView() : settingsView();
   mount(root, shell(body));
   hydrate();
+  const tp = $('#tplprev');
+  if (tp) tp.textContent = tplPreview(($<HTMLTextAreaElement>('textarea[name=ordTpl]')?.value) ?? '');
 }
 function loginView(msg = '') {
   mount(root, html`<form class="login panel" data-form="login"><h1>پنل مدیریت</h1>
@@ -401,7 +438,8 @@ async function login(token: string, repo: string) {
   creds = { token, repo };
   try {
     user = ((await (await gh('/user')).json()) as { login: string }).login;
-    const r = (await (await gh(R())).json()) as { private: boolean; permissions?: { push?: boolean } };
+    const r = (await (await gh(R())).json()) as { private: boolean; default_branch?: string; permissions?: { push?: boolean } };
+    branch = r.default_branch ?? 'main';
     if (!r.private) throw new Error('این مخزن عمومی است. داده‌ها باید در یک مخزن خصوصی باشند.');
     if (!r.permissions?.push) throw new Error('توکن اجازه نوشتن روی این مخزن را ندارد.');
     await loadAll();
@@ -415,6 +453,122 @@ const newProduct = (): Product => ({ id: `candle-${String(db.products!.content.l
 const syncProduct = () => { const f = $<HTMLFormElement>('form[data-form=product]'); if (f && editing) editing.p = readProduct(f, editing.p); };
 const syncHome = () => { const f = $<HTMLFormElement>('form[data-form=home]'); if (f && hp) { const keep = errors; hp = readHome(f, hp); if (keep.length) errors = keep; } };
 
+/** Compare what is saved in the private repo with what the live site currently serves. */
+async function checkSync() {
+  try {
+    const r = await fetch(asset('data/products.json'), { cache: 'no-store' });
+    const live = (await r.json()) as Product[];
+    const key = (p: Product) => JSON.stringify(p);
+    const lm = new Map(live.map((p) => [p.id, key(p)]));
+    const priv = db.products!.content;
+    let changed = priv.filter((p) => lm.get(p.id) !== key(p)).length;
+    changed += live.filter((p) => !priv.some((x) => x.id === p.id)).length;
+    syncInfo = { changed };
+  } catch { syncInfo = null; }
+}
+const syncPill = (): Safe => (syncInfo === null ? html`` : syncInfo.changed === 0
+  ? html`<p><span class="pill ok">محصولات پنل و فروشگاه هم‌گام‌اند ✓</span></p>`
+  : html`<p><span class="pill warn">${faNum(syncInfo.changed)} تغییر هنوز در فروشگاه منتشر نشده</span> <button class="link" type="button" data-act="deploynow">انتشار</button></p>`);
+
+const probe = (u: string) => new Promise<void>((ok, bad) => {
+  const i = new Image();
+  const t = setTimeout(() => bad(new Error('لینک تصویر پاسخ نداد.')), 8000);
+  i.onload = () => { clearTimeout(t); ok(); };
+  i.onerror = () => { clearTimeout(t); bad(new Error('این لینک تصویر قابل بارگذاری نیست.')); };
+  i.src = u;
+});
+
+function syncCats() {
+  const f = $<HTMLFormElement>('form[data-form=cats]');
+  if (!f) return;
+  const n = f.querySelectorAll('input[name^=cn]').length;
+  cd = Array.from({ length: n }, (_, i) => {
+    const c: Category = { id: val(f, `cid${i}`).trim(), name: val(f, `cn${i}`).trim() };
+    const d = val(f, `cd${i}`).trim(), im = val(f, `ci${i}`).trim();
+    if (d) c.description = d;
+    if (im) c.image = im;
+    return c;
+  });
+}
+/** IDs are generated, so Persian names work: slug from the name when it is Latin, otherwise cat-N. */
+function withIds(list: Category[]): Category[] {
+  const used = new Set(list.map((c) => c.id).filter(Boolean));
+  return list.map((c) => {
+    if (c.id) return c;
+    const base = slugify(c.name) || 'cat';
+    let id = base, n = 1;
+    while (used.has(id)) id = `${base}-${n++}`;
+    used.add(id);
+    return { ...c, id };
+  });
+}
+
+/* ---------- orders ---------- */
+const fmt = () => makeFmt(db.settings!.content.currency);
+async function loadOrders() {
+  const t = (await (await gh(`${R()}/git/trees/${encodeURIComponent(branch)}?recursive=1`)).json()) as { tree: { path: string; type: string }[] };
+  const paths = t.tree.filter((x) => x.type === 'blob' && /^orders\/\d{4}-\d{2}\/ord-[a-z0-9-]+\.json$/.test(x.path)).map((x) => x.path).sort().reverse().slice(0, 80);
+  const out: OrderRec[] = [];
+  for (let i = 0; i < paths.length; i += 6) {
+    const chunk = await Promise.all(paths.slice(i, i + 6).map(async (path) => {
+      const f = await getFile(path);
+      try { return f ? ({ order: JSON.parse(f.text) as Order, sha: f.sha, path } as OrderRec) : null; } catch { return null; }
+    }));
+    chunk.forEach((c) => { if (c) out.push(c); });
+  }
+  orders = out;
+}
+async function updateOrder(path: string, patch: Partial<Order>) {
+  const rec = orders?.find((o) => o.path === path);
+  if (!rec) return;
+  const next: Order = { ...rec.order, ...patch, updatedAt: new Date().toISOString() };
+  rec.sha = await putFile(path, toB64(JSON.stringify(next, null, 2) + '\n'), `admin(${user}): order ${next.id} -> ${next.status}`, rec.sha);
+  rec.order = next;
+}
+function ordersCsv() {
+  const q = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+  const rows = [['کد', 'تاریخ', 'نام', 'تلفن', 'نشانی', 'اقلام', 'جمع', 'وضعیت'], ...(orders ?? []).map(({ order: o }) => [o.id, o.createdAt, o.customer.name, o.customer.phone, o.customer.address, o.items.map((i) => `${i.name}×${i.qty}`).join(' | '), o.total, STATUS_LABEL[o.status]])];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + rows.map((r) => r.map(q).join(',')).join('\n')], { type: 'text/csv' }));
+  a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function orderRows(): Safe {
+  const cur = db.settings!.content.currency;
+  const q = of.q.trim().toLowerCase();
+  const l = (orders ?? []).filter(({ order: o }) => (!of.status || o.status === of.status) && (!q || `${o.id} ${o.customer.name} ${o.customer.phone}`.toLowerCase().includes(q)));
+  return html`<p class="muted">${faNum(l.length)} سفارش</p><div class="tbl"><table><thead><tr><th>تاریخ</th><th>کد</th><th>مشتری</th><th>جمع</th><th>وضعیت</th><th></th></tr></thead><tbody>
+    ${l.length ? l.map(({ order: o, path }) => html`<tr><td>${dateFa(o.createdAt)}</td><td dir="ltr"><small>${o.id}</small></td><td>${o.customer.name}<br /><small class="muted" dir="ltr">${o.customer.phone}</small></td><td>${faNum(o.total)} ${cur}</td>
+      <td><span class="pill st-${o.status}">${STATUS_LABEL[o.status]}</span></td><td><button class="btn ghost sm" type="button" data-act="openorder" data-id="${path}">جزئیات</button></td></tr>`) : html`<tr><td colspan="6" class="muted">سفارشی پیدا نشد.</td></tr>`}</tbody></table></div>`;
+}
+function orderDetail(rec: OrderRec): Safe {
+  const o = rec.order, s = db.settings!.content, cur = s.currency;
+  const msg = renderOrderMessage(s.orders?.messageTemplate || DEFAULT_TEMPLATE, o, s.brandName, fmt());
+  const tg = telegramUrl(s.telegramUsername);
+  return html`<div class="panel"><div class="row-actions"><h2>سفارش <span dir="ltr">${o.id}</span></h2><span class="sp"></span><button class="btn ghost sm" type="button" data-act="closeorder">بستن</button></div>
+    <div class="grid2"><div><h3>مشتری</h3><p><strong>${o.customer.name}</strong></p><p><a href="tel:${o.customer.phone}" dir="ltr">${o.customer.phone}</a></p><p>${o.customer.address || '—'}</p><p class="muted">${o.customer.notes || '—'}</p></div>
+      <div><label>وضعیت<select data-order-status="${rec.path}">${ORDER_STATUSES.map((st) => html`<option value="${st}" ${st === o.status ? html`selected` : ''}>${STATUS_LABEL[st]}</option>`)}</select></label><p class="muted">ثبت: ${dateFa(o.createdAt)}${o.updatedAt ? ` · بروزرسانی: ${dateFa(o.updatedAt)}` : ''}</p></div></div>
+    <table><thead><tr><th>محصول</th><th>تعداد</th><th>قیمت واحد</th><th>جمع</th></tr></thead><tbody>${o.items.map((i) => html`<tr><td>${i.name}</td><td>${faNum(i.qty)}</td><td>${faNum(i.unit)}</td><td>${faNum(i.total)}</td></tr>`)}</tbody></table>
+    <p><strong>جمع کل: ${faNum(o.total)} ${cur}</strong></p>
+    <h3>پیام سفارش</h3><div class="summary-box">${msg}</div>
+    <div class="row-actions"><button class="btn primary sm" type="button" data-act="copymsg" data-id="${rec.path}">کپی پیام</button>${tg ? html`<a class="btn ghost sm" href="${tg}" target="_blank" rel="noopener noreferrer">باز کردن تلگرام</a>` : ''}</div>
+    <label>یادداشت داخلی (فقط برای شما)<textarea data-order-note="${rec.path}" maxlength="500">${o.adminNote ?? ''}</textarea></label>
+    <div class="row-actions"><button class="btn primary sm" type="button" data-act="savenote" data-id="${rec.path}">ذخیره یادداشت</button><button class="btn danger sm" type="button" data-act="delorder" data-id="${rec.path}">حذف سفارش</button></div></div>`;
+}
+function ordersView(): Safe {
+  const open = orders?.find((o) => o.path === orderOpen);
+  return html`<h1>سفارش‌ها</h1>
+    <p class="notice">سفارش‌ها فقط در مخزن خصوصی داده ذخیره می‌شوند (پوشه orders). ${db.settings!.content.orders?.enabled === false ? 'ثبت سفارش از سایت در تنظیمات غیرفعال است.' : ''}</p>
+    ${orders === null ? html`<div class="panel"><button class="btn primary" type="button" data-act="loadorders">بارگذاری سفارش‌ها</button></div>` : html`
+    <form class="panel toolbar" data-form="ofilter" role="search"><label>جستجو (کد، نام، تلفن)<input type="search" name="q" value="${of.q}" /></label>
+      <label>وضعیت<select name="status"><option value="">همه</option>${ORDER_STATUSES.map((st) => html`<option value="${st}" ${st === of.status ? html`selected` : ''}>${STATUS_LABEL[st]}</option>`)}</select></label>
+      <button class="btn ghost" type="button" data-act="loadorders">بازخوانی</button><button class="btn ghost" type="button" data-act="orderscsv">دانلود CSV</button></form>
+    ${open ? orderDetail(open) : ''}<div class="panel" id="otable">${orderRows()}</div>`}`;
+}
+
+const SAMPLE_ORDER: Order = { id: 'ord-demo-0001', createdAt: new Date().toISOString(), status: 'new', currency: '', total: 500000, customer: { name: 'نام نمونه', phone: '09120000000', address: 'تهران، خیابان نمونه', notes: 'لطفاً زنگ بزنید' }, items: [{ id: 'sample', name: 'محصول نمونه', qty: 2, unit: 250000, total: 500000 }] };
+const tplPreview = (t: string) => renderOrderMessage(t || DEFAULT_TEMPLATE, SAMPLE_ORDER, db.settings!.content.brandName, fmt());
+
 function moveImg(i: number, d: number) {
   syncProduct();
   const p = editing!.p, a = p.imageAlts ?? [];
@@ -426,8 +580,12 @@ function moveImg(i: number, d: number) {
 }
 
 const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
-  tab: (el) => { if (!leave()) return; tab = el.dataset.id as Tab; editing = null; hp = null; errors = []; paint(); },
-  reload: async () => { dirty = false; await loadAll(); hp = null; editing = null; errors = []; paint(); note('بازخوانی شد.'); },
+  tab: async (el) => {
+    if (!leave()) return;
+    tab = el.dataset.id as Tab; editing = null; hp = null; cd = null; errors = []; paint();
+    if (tab === 'orders' && orders === null) { await loadOrders(); paint(); }
+  },
+  reload: async () => { dirty = false; await loadAll(); orders = null; cd = null; hp = null; editing = null; errors = []; paint(); note('بازخوانی شد.'); },
   logout: () => { creds = null; user = ''; sessionStorage.removeItem(SESSION_KEY); previews.forEach((u) => URL.revokeObjectURL(u)); previews.clear(); loginView(); },
   new: () => { editing = { p: newProduct(), isNew: true, orig: [] }; errors = []; paint(); },
   edit: (el) => { const p = db.products!.content.find((x) => x.id === el.dataset.id); if (p) { editing = { p: structuredClone(p), isNew: false, orig: [...p.images] }; errors = []; paint(); } },
@@ -457,11 +615,50 @@ const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
   },
   export: () => { exportBackup(); note('فایل پشتیبان دانلود شد.'); },
   deploynow: async () => { await publish(); await loadDeploy(); paint(); note('درخواست انتشار ارسال شد.'); },
-  refreshdeploy: async () => { await loadDeploy(); paint(); },
+  refreshdeploy: async () => { await Promise.all([loadDeploy(), checkSync()]); paint(); },
   mainimg: (el) => { syncProduct(); const i = Number(el.dataset.id); const p = editing!.p; p.images.unshift(...p.images.splice(i, 1)); const a = p.imageAlts ?? []; a.unshift(...a.splice(i, 1)); dirty = true; paint(); },
   upimg: (el) => { moveImg(Number(el.dataset.id), -1); },
   downimg: (el) => { moveImg(Number(el.dataset.id), 1); },
-  addcat: () => { const l = db.categories!.content; l.push({ id: `category-${l.length + 1}`, name: 'دسته جدید' }); paint(); },
+  addcat: () => { syncCats(); (cd ??= structuredClone(db.categories!.content)).push({ id: '', name: '' }); paint(); },
+  delcat: async (el) => {
+    syncCats();
+    const i = Number(el.dataset.id), c = cd?.[i];
+    if (!c) return;
+    const n = db.products!.content.filter((p) => c.id && p.category === c.id).length;
+    if (n) throw new Error(`این دسته ${faNum(n)} محصول دارد؛ ابتدا آن‌ها را به دسته دیگری منتقل کنید.`);
+    cd!.splice(i, 1); paint();
+  },
+  addurl: async () => {
+    syncProduct();
+    const f = $<HTMLFormElement>('form[data-form=product]');
+    const u = (f ? val(f, 'imgurl') : '').trim();
+    const p = editing!.p;
+    if (!u.startsWith('https://') || !isImageRef(u)) throw new Error('لینک تصویر باید با https:// شروع شود و معتبر باشد.');
+    if (p.images.length >= 8) throw new Error('حداکثر ۸ تصویر.');
+    if (p.images.includes(u)) throw new Error('این لینک قبلاً اضافه شده است.');
+    await probe(u);
+    p.images.push(u); p.imageAlts = [...(p.imageAlts ?? []), '']; dirty = true; paint(); note('لینک تصویر اضافه شد.');
+  },
+  loadorders: async () => { await loadOrders(); paint(); },
+  orderscsv: () => ordersCsv(),
+  openorder: (el) => { orderOpen = el.dataset.id ?? null; paint(); window.scrollTo(0, 0); },
+  closeorder: () => { orderOpen = null; paint(); },
+  copymsg: async (el) => {
+    const rec = orders?.find((o) => o.path === el.dataset.id);
+    if (!rec) return;
+    const st = db.settings!.content;
+    note((await copyText(renderOrderMessage(st.orders?.messageTemplate || DEFAULT_TEMPLATE, rec.order, st.brandName, fmt()))) ? 'پیام کپی شد.' : 'کپی انجام نشد.');
+  },
+  savenote: async (el) => {
+    const t = $<HTMLTextAreaElement>(`textarea[data-order-note="${CSS.escape(el.dataset.id ?? '')}"]`);
+    await updateOrder(el.dataset.id!, { adminNote: (t?.value ?? '').trim().slice(0, 500) }); paint(); note('یادداشت ذخیره شد.');
+  },
+  delorder: async (el) => {
+    const rec = orders?.find((o) => o.path === el.dataset.id);
+    if (!rec || !confirm(`سفارش ${rec.order.id} برای همیشه حذف شود؟`)) return;
+    await gh(`${R()}/contents/${rec.path}`, { method: 'DELETE', body: JSON.stringify({ message: `admin(${user}): delete order ${rec.order.id}`, sha: rec.sha }) });
+    orders = orders!.filter((o) => o !== rec); orderOpen = null; paint(); note('سفارش حذف شد.');
+  },
   addbanner: () => { syncHome(); hp!.banners.push({ title: 'بنر جدید', text: '', link: '#/shop' }); paint(); },
   rmbanner: (el) => { syncHome(); hp!.banners.splice(Number(el.dataset.id), 1); paint(); },
 };
@@ -478,6 +675,11 @@ root.addEventListener('change', (e) => {
   const inp = e.target as HTMLInputElement;
   const kind = inp.dataset.upload;
   const file = inp.files?.[0];
+  const os = inp.dataset.orderStatus;
+  if (os) {
+    updateOrder(os, { status: inp.value as OrderStatus }).then(() => { paint(); note('وضعیت سفارش تغییر کرد.'); }).catch((x) => { fail(x); paint(); });
+    return;
+  }
   const tg = inp.dataset.tg as 'available' | 'featured' | undefined;
   if (tg && inp.dataset.id) {
     const id = inp.dataset.id;
@@ -491,6 +693,19 @@ root.addEventListener('change', (e) => {
   (async () => {
     note('در حال بهینه‌سازی و بارگذاری تصویر…');
     if (kind === 'product') { syncProduct(); const p = editing!.p; if (p.images.length >= 8) throw new Error('حداکثر ۸ تصویر.'); p.images.push(await upload(file, 'products', p.id || p.name)); p.imageAlts = [...(p.imageAlts ?? []), ''];
+    } else if (kind === 'cat') {
+      syncCats();
+      const i = Number(inp.dataset.id), c = cd?.[i];
+      if (c) { c.image = await upload(file, 'categories', c.id || c.name || 'category'); dirty = true; }
+    } else if (kind === 'wp') {
+      const f = $<HTMLFormElement>('form[data-form=settings]');
+      const path = await upload(file, 'banners', 'wallpaper');
+      const field = f?.elements.namedItem('wpImage') as HTMLInputElement | null;
+      if (field) field.value = path;
+      const pv = $<HTMLImageElement>('#wpprev');
+      if (pv) { pv.dataset.p = path; pv.hidden = false; hydrate(); }
+      dirty = true; note('تصویر زمینه بارگذاری شد. تنظیمات را ذخیره کنید.');
+      return;
     } else if (kind === 'hero') { syncHome(); hp!.heroImage = await upload(file, 'banners', 'hero');
     } else { syncHome(); const b = hp!.banners[Number(inp.dataset.id)]; if (b) b.image = await upload(file, 'banners', b.title); }
     paint(); note('تصویر بارگذاری شد. با ذخیره فرم، تغییر نهایی می‌شود.');
@@ -519,16 +734,19 @@ root.addEventListener('submit', (e) => {
       await Promise.all(gone.map((i) => removeImage(i)));
       dirty = false; editing = null; paint(); note('ذخیره شد. انتشار سایت چند دقیقه طول می‌کشد.');
     } else if (kind === 'cats') {
-      const list: Category[] = db.categories!.content.map((_, i) => {
-        const c: Category = { id: val(f, `cid${i}`).trim(), name: val(f, `cn${i}`).trim() };
-        const d = val(f, `cd${i}`).trim(); const im = val(f, `ci${i}`).trim();
-        if (d) c.description = d;
-        if (im) c.image = im;
-        return c;
-      });
-      errors = validateCategories(list);
+      syncCats();
+      const named = (cd ?? []).filter((c) => c.name || c.id || c.description || c.image);
+      const list = withIds(named.map((c) => ({ ...c })));
+      const bad = list.map((c, i) => (c.name ? '' : `دسته ${i + 1}: نام را وارد کنید.`)).filter(Boolean);
+      const dupName = list.some((c, i) => list.findIndex((x) => x.name === c.name) !== i);
+      errors = [...bad, ...(dupName ? ['نام دسته‌ها نباید تکراری باشد.'] : []), ...validateCategories(list)];
       if (errors.length) return paint();
-      await save('categories', list); paint(); dirty = false; note('دسته‌بندی‌ها ذخیره شد.');
+      for (const c of list) if (c.image && !isImageRef(c.image)) errors.push(`تصویر «${c.name}» باید مسیر مخزن یا لینک https باشد.`);
+      if (errors.length) return paint();
+      const gone = db.categories!.content.filter((c) => !list.some((x) => x.id === c.id));
+      const inUse = gone.filter((c) => db.products!.content.some((p) => p.category === c.id));
+      if (inUse.length) { errors = [`دسته «${inUse[0]!.name}» محصول دارد و حذف نمی‌شود؛ ابتدا محصولات را به دسته دیگری ببرید.`]; return paint(); }
+      await save('categories', list); cd = null; dirty = false; paint(); note('دسته‌بندی‌ها ذخیره شد.');
     } else if (kind === 'home' && hp) {
       const h = readHome(f, hp);
       errors = [...errors, ...validateHomepage(h)];
@@ -543,6 +761,9 @@ root.addEventListener('submit', (e) => {
         currency: val(f, 'currency').trim(), shippingInfo: val(f, 'shippingInfo').trim(),
         contact: { email: val(f, 'email').trim(), phone: val(f, 'phone').trim(), address: val(f, 'address').trim() },
         social: { instagram: val(f, 'instagram').trim(), telegramChannel: val(f, 'telegramChannel').trim(), pinterest: val(f, 'pinterest').trim() },
+        banner: { enabled: chk(f, 'bnOn'), text: val(f, 'bnText').trim(), link: val(f, 'bnLink').trim(), bg: val(f, 'bnBg') || '#A9D6E5', color: val(f, 'bnFg') || '#263746' },
+        wallpaper: { enabled: chk(f, 'wpOn'), image: val(f, 'wpImage').trim(), color: val(f, 'wpColor').trim(), overlay: Number(val(f, 'wpOverlay') || 0.7) },
+        orders: { enabled: chk(f, 'ordOn'), requireAddress: chk(f, 'ordAddr'), messageTemplate: val(f, 'ordTpl').trim() || DEFAULT_TEMPLATE },
         customOrder: { enabled: chk(f, 'coOn'), basePrice: num(val(f, 'coBase')) ?? 0, groups, giftPackaging: { label: val(f, 'giftLabel').trim(), extra: num(val(f, 'giftExtra')) ?? 0 } },
       };
       errors = validateSettings(s);
@@ -565,6 +786,13 @@ root.addEventListener('input', (e) => {
   } else if (kind === 'home' && hp) {
     dirty = true;
     mount($('#hv')!, heroPreview({ heroTitle: val(f, 'heroTitle'), heroDescription: val(f, 'heroDescription'), heroImage: hp.heroImage })); hydrate();
+  } else if (kind === 'ofilter') {
+    of = { q: val(f, 'q'), status: val(f, 'status') };
+    mount($('#otable')!, orderRows());
+  } else if (kind === 'settings') {
+    dirty = true;
+    const pv = $('#tplprev');
+    if (pv) pv.textContent = tplPreview(val(f, 'ordTpl'));
   } else if (kind) dirty = true;
 });
 document.addEventListener('keydown', (e) => {

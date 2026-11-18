@@ -17,18 +17,22 @@ const { priceCurrency, priceMultiplier } = settings.seo;
 
 const indexPath = 'dist/index.html';
 let index = readFileSync(indexPath, 'utf8');
-writeFileSync(indexPath, index.replaceAll('__SITE_URL__', SITE));
-index = index.replaceAll('__SITE_URL__', SITE);
+let ordersOrigin = '';
+try { ordersOrigin = process.env.VITE_ORDERS_API_URL ? new URL(process.env.VITE_ORDERS_API_URL).origin : ''; } catch { /* invalid URL: leave CSP tight */ }
+index = index.replaceAll('__SITE_URL__', SITE).replace(' __ORDERS_ORIGIN__', ordersOrigin ? ` ${ordersOrigin}` : '');
+writeFileSync(indexPath, index);
 const css = [...index.matchAll(/<link rel="stylesheet"[^>]*>/g)].map((m) => m[0]).join('\n  ');
 
 for (const p of products) {
+  const abs = (i) => (/^https:/.test(i) ? i : `${SITE}/${i}`);
+  const rel = (i) => (/^https:/.test(i) ? i : `${BASE}${i}`);
   const url = `${SITE}/products/${p.id}/`;
-  const img = `${SITE}/${p.images[0]}`;
+  const img = abs(p.images[0]);
   const cat = categories.find((c) => c.id === p.category);
   const price = p.discountPrice !== null && p.discountPrice < p.price ? p.discountPrice : p.price;
   const desc = p.description.slice(0, 155);
   const jsonld = [
-    { '@context': 'https://schema.org', '@type': 'Product', name: p.name, description: p.description, image: p.images.map((i) => `${SITE}/${i}`), sku: p.id, brand: { '@type': 'Brand', name: settings.brandName },
+    { '@context': 'https://schema.org', '@type': 'Product', name: p.name, description: p.description, image: p.images.map(abs), sku: p.id, brand: { '@type': 'Brand', name: settings.brandName },
       offers: { '@type': 'Offer', url, priceCurrency, price: String(price * priceMultiplier), availability: p.available ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock' } },
     { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'خانه', item: `${SITE}/` },
@@ -59,7 +63,7 @@ for (const p of products) {
 <body>
   <main class="static-product">
     <nav class="crumbs" aria-label="مسیر صفحه"><a href="${BASE}">خانه</a> ‹ <a href="${BASE}#/shop">فروشگاه</a> ‹ <span aria-current="page">${esc(p.name)}</span></nav>
-    <img src="${BASE}${p.images[0]}" alt="${esc(p.imageAlts?.[0] ?? p.name)}" width="800" height="800" />
+    <img src="${rel(p.images[0])}" alt="${esc(p.imageAlts?.[0] ?? p.name)}" width="800" height="800" />
     <h1>${esc(p.name)}</h1>
     <p>${esc(p.description)}</p>
     <ul><li>رایحه: ${esc(p.fragrance)}</li><li>اندازه: ${esc(p.size)}</li><li>نوع موم: ${esc(p.waxType)}</li><li>مدت سوختن: ${esc(p.burningDuration)}</li><li>${p.available ? 'موجود' : 'ناموجود'}</li></ul>

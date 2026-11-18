@@ -9,12 +9,14 @@
     "validate:data": "tsx scripts/validate-data.ts",
     "test": "vitest run",
     "build": "tsc --noEmit && vite build && node scripts/postbuild.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck:worker": "tsc --noEmit -p serverless/orders-api/tsconfig.json"
   },
   "dependencies": {
     "@fontsource-variable/vazirmatn": "^5.0.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
     "@types/node": "^20.14.0",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",

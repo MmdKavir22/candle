@@ -8,3 +8,10 @@
 - **Frontend**: all interpolated values are HTML-escaped by default; data links must start with `#/` or `https://`; strict CSP (`script-src 'self'`) limits damage from XSS, which is the main risk for a token held in the page.
 - **Privacy**: no customer data is collected or stored; the cart keeps only IDs and quantities; custom-order images stay on the device.
 - **Limits to know**: published product data is public by design; anyone who steals your admin token can edit the catalog, so keep it short-lived and don't paste it on shared computers.
+
+## Orders (added)
+- Customer data (name, phone, address, notes) exists only in the **private** repo under `orders/`; the public build never includes it.
+- The orders Worker is write-only: it can create one new order file and nothing else; it does not read or return orders. Its token is a Worker secret limited to the private repo.
+- It accepts only `ALLOWED_ORIGIN`, caps body size, has a honeypot field and a best-effort rate limit, validates with the shared validators, and **recomputes names/prices from the private `products.json`** (client prices are ignored).
+- Residual risks: the origin check does not stop non-browser spam (add a Cloudflare rate-limit rule); anyone with your admin token can read orders; order JSON contains personal data, so keep the data repo private and review who has access.
+- `connect-src` on the storefront allows only the Worker origin (injected at build time); `img-src` allows `https:` for external product images.

@@ -5,7 +5,7 @@ import { asset } from '../utils/format';
 export interface Catalog { products: Product[]; categories: Category[]; homepage: Homepage; settings: Settings }
 
 async function load<T>(name: string): Promise<T> {
-  const r = await fetch(asset(`data/${name}.json`), { headers: { Accept: 'application/json' } });
+  const r = await fetch(asset(`data/${name}.json`), { headers: { Accept: 'application/json' }, cache: 'no-cache' });
   if (!r.ok) throw new Error(`${name}.json: ${r.status}`);
   return (await r.json()) as T;
 }

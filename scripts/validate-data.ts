@@ -20,11 +20,11 @@ if (!problems.length) {
   const ids = new Set(products.map((p) => p.id));
   for (const p of products) {
     if (!cats.has(p.category)) problems.push(`${p.id}: unknown category ${p.category}`);
-    for (const i of p.images) if (!existsSync(`public/${i}`)) problems.push(`${p.id}: missing image ${i}`);
+    for (const i of p.images) if (!i.startsWith('https://') && !existsSync(`public/${i}`)) problems.push(`${p.id}: missing image ${i}`);
   }
   const h = data.homepage as Homepage;
   h.featuredIds.forEach((id) => { if (!ids.has(id)) problems.push(`homepage: unknown featured id ${id}`); });
-  if (!existsSync(`public/${h.heroImage}`)) problems.push(`homepage: missing ${h.heroImage}`);
+  if (!h.heroImage.startsWith('https://') && !existsSync(`public/${h.heroImage}`)) problems.push(`homepage: missing ${h.heroImage}`);
 }
 if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
 console.log('Data files are valid.');

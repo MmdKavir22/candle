@@ -146,3 +146,11 @@ body.busy .btn[type=submit], body.busy [data-act=toggle] { pointer-events: none;
 @keyframes msgin { from { opacity: 0; transform: translateY(14px); } }
 .btn { transition: background .2s, transform .15s; } .btn:active { transform: scale(.97); }
 .login { animation: viewin .5s both; }
+
+/* ---------- orders, categories, settings additions ---------- */
+.catrow { border: 1px dashed var(--border); border-radius: 14px; padding: .8rem; margin-bottom: .8rem; }
+.urlrow { display: grid; grid-template-columns: 1fr auto; gap: .6rem; align-items: end; margin-top: .6rem; }
+.summary-box { white-space: pre-wrap; background: var(--bg); border: 1px dashed var(--accent); border-radius: 12px; padding: 1rem; margin-block: .6rem; font-size: .9rem; }
+.notice { background: var(--secondary); border-radius: 12px; padding: .7rem 1rem; }
+.wpprev { max-width: 260px; border-radius: 14px; margin-block: .6rem; }
+.pill.st-new { background: #e4f1ff; color: #1f5d9e; } .pill.st-confirmed, .pill.st-preparing { background: #fff2d6; color: #8a5a00; } .pill.st-shipped { background: #e9e4fb; color: #5a3fa0; } .pill.st-done { background: #dff3ea; color: var(--ok); } .pill.st-cancelled { background: #fbe4e7; color: var(--danger); }

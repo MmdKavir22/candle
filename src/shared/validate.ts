@@ -4,6 +4,10 @@ import { GROUP_KEYS } from './types';
 type R = Record<string, unknown>;
 export const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const IMG_RE = /^images\/(products|banners|categories)\/[a-z0-9][a-z0-9-]*\.(webp|jpe?g|png|svg)$/;
+/** A repo-relative image path (images/<dir>/<file>) or a plain https:// image URL. */
+export const isImageRef = (s: unknown): s is string =>
+  typeof s === 'string' && (IMG_RE.test(s) || (s.length <= 500 && /^https:\/\/[^\s"'<>()\\]+$/.test(s)));
+export const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 export const TG_RE = /^[A-Za-z][A-Za-z0-9_]{4,31}$/;
 export const isObj = (v: unknown): v is R => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -36,7 +40,7 @@ export function validateProduct(p: unknown): string[] {
   }
   if (typeof p.category !== 'string' || !ID_RE.test(p.category)) e.push('«دسته‌بندی» را انتخاب کنید.');
   if (!Array.isArray(p.images) || p.images.length < 1 || p.images.length > 8) e.push('بین ۱ تا ۸ تصویر لازم است.');
-  else if (!p.images.every((i) => typeof i === 'string' && IMG_RE.test(i))) e.push('مسیر تصویر نامعتبر است.');
+  else if (!p.images.every((i) => isImageRef(i))) e.push('مسیر یا لینک تصویر نامعتبر است (مسیر مخزن یا لینک https).');
   if (p.imageAlts !== undefined) {
     if (!Array.isArray(p.imageAlts) || !p.imageAlts.every((a) => typeof a === 'string' && a.length <= 160)) e.push('متن جایگزین تصویر نامعتبر است.');
   }
@@ -70,12 +74,12 @@ export function validateCategories(list: unknown): string[] {
   const seen = new Set<string>();
   list.forEach((c, i) => {
     if (!isObj(c)) return void e.push(`دسته ${i + 1} نامعتبر است.`);
-    if (typeof c.id !== 'string' || !ID_RE.test(c.id)) e.push(`دسته ${i + 1}: شناسه نامعتبر.`);
+    if (typeof c.id !== 'string' || !ID_RE.test(c.id)) e.push(`دسته ${i + 1}: شناسه باید حروف کوچک لاتین، عدد و خط تیره باشد.`);
     else if (seen.has(c.id)) e.push(`شناسه دسته تکراری: ${c.id}`);
     else seen.add(c.id);
     str(c, 'name', 60, e, `نام دسته ${i + 1}`);
     str(c, 'description', 200, e, `توضیح دسته ${i + 1}`, false);
-    if (c.image !== undefined && (typeof c.image !== 'string' || !IMG_RE.test(c.image))) e.push(`تصویر دسته ${i + 1} نامعتبر است.`);
+    if (c.image !== undefined && !isImageRef(c.image)) e.push(`تصویر دسته ${i + 1} نامعتبر است.`);
   });
   return e;
 }
@@ -85,14 +89,14 @@ export function validateHomepage(h: unknown): string[] {
   if (!isObj(h)) return ['اطلاعات صفحه اصلی نامعتبر است.'];
   str(h, 'heroTitle', 120, e, 'عنوان');
   str(h, 'heroDescription', 400, e, 'توضیح');
-  if (typeof h.heroImage !== 'string' || !IMG_RE.test(h.heroImage)) e.push('تصویر اصلی نامعتبر است.');
+  if (!isImageRef(h.heroImage)) e.push('تصویر اصلی نامعتبر است.');
   if (!Array.isArray(h.banners) || h.banners.length > 10) e.push('بنرها نامعتبرند.');
   else h.banners.forEach((b, i) => {
     if (!isObj(b)) return void e.push(`بنر ${i + 1} نامعتبر است.`);
     str(b, 'title', 80, e, `عنوان بنر ${i + 1}`);
     str(b, 'text', 200, e, `متن بنر ${i + 1}`, false);
     if (typeof b.link !== 'string' || !isSafeLink(b.link)) e.push(`لینک بنر ${i + 1} باید با #/ یا https:// شروع شود.`);
-    if (b.image !== undefined && (typeof b.image !== 'string' || !IMG_RE.test(b.image))) e.push(`تصویر بنر ${i + 1} نامعتبر است.`);
+    if (b.image !== undefined && !isImageRef(b.image)) e.push(`تصویر بنر ${i + 1} نامعتبر است.`);
   });
   if (!Array.isArray(h.featuredIds) || h.featuredIds.length > 24 || !h.featuredIds.every((x) => typeof x === 'string' && ID_RE.test(x))) e.push('محصولات ویژه نامعتبرند.');
   const arrOf = (k: string, shape: string[], max: number) => {
@@ -126,6 +130,18 @@ export function validateSettings(s: unknown): string[] {
   if (!isObj(s.social)) e.push('شبکه‌های اجتماعی نامعتبرند.');
   else for (const [k, v] of Object.entries(s.social)) if (typeof v !== 'string' || (v !== '' && !/^https:\/\//.test(v)) || v.length > 200) e.push(`لینک «${k}» باید با https:// شروع شود.`);
   if (!isObj(s.seo) || typeof s.seo.priceCurrency !== 'string' || !/^[A-Z]{3}$/.test(s.seo.priceCurrency) || !int(s.seo.priceMultiplier, 1, 1e6)) e.push('تنظیمات سئو نامعتبر است.');
+  if (s.orders !== undefined) {
+    const o = s.orders;
+    if (!isObj(o) || typeof o.enabled !== 'boolean' || typeof o.requireAddress !== 'boolean' || typeof o.messageTemplate !== 'string' || !o.messageTemplate.trim() || o.messageTemplate.length > 2000) e.push('تنظیمات ثبت سفارش یا قالب پیام نامعتبر است (حداکثر ۲۰۰۰ نویسه).');
+  }
+  if (s.banner !== undefined) {
+    const b = s.banner;
+    if (!isObj(b) || typeof b.enabled !== 'boolean' || typeof b.text !== 'string' || b.text.length > 200 || typeof b.link !== 'string' || (b.link !== '' && !isSafeLink(b.link)) || typeof b.bg !== 'string' || !HEX_RE.test(b.bg) || typeof b.color !== 'string' || !HEX_RE.test(b.color)) e.push('بنر بالای سایت نامعتبر است (رنگ‌ها به شکل #RRGGBB و لینک #/ یا https://).');
+  }
+  if (s.wallpaper !== undefined) {
+    const w = s.wallpaper;
+    if (!isObj(w) || typeof w.enabled !== 'boolean' || typeof w.image !== 'string' || (w.image !== '' && !isImageRef(w.image)) || typeof w.color !== 'string' || (w.color !== '' && !HEX_RE.test(w.color)) || typeof w.overlay !== 'number' || w.overlay < 0 || w.overlay > 0.95) e.push('تصویر زمینه نامعتبر است.');
+  }
   const c = s.customOrder;
   if (!isObj(c) || typeof c.enabled !== 'boolean' || !int(c.basePrice, 0, 1e10) || !isObj(c.groups)) e.push('تنظیمات سفارش سفارشی نامعتبر است.');
   else {

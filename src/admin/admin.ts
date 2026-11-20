@@ -4,12 +4,16 @@ import type { Category, DataName, Homepage, Product, Settings } from '../shared/
 import { validateCategories, validateHomepage, validateProduct, validateProducts, validateSettings, validators, isImageRef, IMG_RE } from '../shared/validate';
 import { DEFAULT_TEMPLATE, ORDER_STATUSES, STATUS_LABEL, renderOrderMessage, type Order, type OrderStatus } from '../shared/order';
 import { makeFmt } from '../services/orders';
+import { DEFAULT_STEPS, PRESETS, SECTION_LABEL, SLOT_LABEL, contrast, resolveHome, resolveMarketing, resolveTheme, slotOf } from '../shared/theme';
+import { IMAGE_SLOTS } from '../shared/types';
 import { copyText, telegramUrl } from '../services/telegram';
+import { toPublicProducts } from '../shared/public';
 import { html, mount, raw, $, $$, type Safe } from '../utils/dom';
 import { asset, dateFa, faNum, money, onSale, slugify, unitPrice } from '../utils/format';
 import { filterProducts, type Filters } from '../utils/catalog';
 
-const SITE_REPO = import.meta.env.VITE_SITE_REPO ?? '';
+const ENV_SITE_REPO = import.meta.env.VITE_SITE_REPO ?? '';
+let siteRepo = ENV_SITE_REPO; // public site repo: build default, overridable in Advanced settings (saved in private config/repos.json)
 const DEFAULT_DATA_REPO = import.meta.env.VITE_DATA_REPO ?? '';
 const SESSION_KEY = 'candle-admin-session';
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -65,7 +69,7 @@ interface Commit { message: string; date: string; author: string }
 const db: { products?: Doc<Product[]>; categories?: Doc<Category[]>; homepage?: Doc<Homepage>; settings?: Doc<Settings> } = {};
 let history: Commit[] = [];
 let user = '';
-type Tab = 'overview' | 'products' | 'orders' | 'homepage' | 'settings';
+type Tab = 'overview' | 'products' | 'orders' | 'homepage' | 'appearance' | 'images' | 'advanced';
 let tab: Tab = 'overview';
 let editing: { p: Product; isNew: boolean; orig: string[] } | null = null;
 let hp: Homepage | null = null;
@@ -77,6 +81,9 @@ let orders: OrderRec[] | null = null;
 let orderOpen: string | null = null;
 let of = { status: '', q: '' };
 let syncInfo: { changed: number } | null = null;
+let sd: Settings | null = null; // settings draft: keeps unsaved edits while buttons re-render the form
+const accOpen = new Set<string>(['repos']);
+let libCache: string[] | null = null;
 let pendingWarn = '';
 let mt = 0;
 function note(m: string, err = false) {
@@ -104,6 +111,20 @@ async function defaultFor(n: DataName): Promise<unknown> {
   throw new ApiError(0, `داده اولیه ${n}.json پیدا نشد؛ محتوای پوشه data-repo-template را در مخزن داده آپلود کنید.`);
 }
 let createdFiles: string[] = [];
+const parseRepo = (v: string): string | null => { const m = /^(?:https:\/\/github\.com\/)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(v.trim()); return m ? (m[1] as string) : null; };
+let repoCfgSha: string | undefined;
+async function loadRepoConfig() {
+  try {
+    const f = await getFile('config/repos.json');
+    repoCfgSha = f?.sha;
+    const r = f ? parseRepo((JSON.parse(f.text) as { siteRepo?: string }).siteRepo ?? '') : null;
+    siteRepo = r ?? ENV_SITE_REPO;
+  } catch { siteRepo = ENV_SITE_REPO; }
+}
+async function saveRepoConfig(repo: string) {
+  repoCfgSha = await putFile('config/repos.json', toB64(JSON.stringify({ siteRepo: repo }, null, 2) + '\n'), `admin(${user}): site repository -> ${repo}`, repoCfgSha);
+  siteRepo = repo;
+}
 async function loadAll() {
   const names: DataName[] = ['products', 'categories', 'homepage', 'settings'];
   createdFiles = [];
@@ -120,12 +141,13 @@ async function loadAll() {
     }
     (db as Record<string, unknown>)[n] = { content: JSON.parse(f.text), sha: f.sha };
   }
+  await loadRepoConfig();
   await Promise.all([loadHistory(), loadDeploy(), checkSync()]);
 }
 /** Ask the public site repo to rebuild so changes go live (needs Actions: write on the site repo). */
 async function publish() {
-  if (!SITE_REPO) { pendingWarn = 'انتشار خودکار تنظیم نشده؛ workflow سایت را دستی اجرا کنید.'; return; }
-  try { await gh(`/repos/${SITE_REPO}/actions/workflows/deploy.yml/dispatches`, { method: 'POST', body: JSON.stringify({ ref: 'main' }) }); }
+  if (!siteRepo) { pendingWarn = 'انتشار خودکار تنظیم نشده؛ workflow سایت را دستی اجرا کنید.'; return; }
+  try { await gh(`/repos/${siteRepo}/actions/workflows/deploy.yml/dispatches`, { method: 'POST', body: JSON.stringify({ ref: 'main' }) }); }
   catch { pendingWarn = 'ذخیره شد اما انتشار خودکار انجام نشد؛ به توکن دسترسی Actions روی مخزن سایت بدهید یا workflow را دستی اجرا کنید.'; }
 }
 async function save(name: DataName, content: unknown) {
@@ -156,7 +178,7 @@ function hydrate() {
 async function removeImage(path: string) {
   try {
     if (!/^images\/(products|banners|categories)\//.test(path)) return;
-    const used = JSON.stringify([db.products?.content, db.homepage?.content, db.categories?.content]);
+    const used = JSON.stringify([db.products?.content, db.homepage?.content, db.categories?.content, db.settings?.content]);
     if (used.includes(`"${path}"`)) return;
     const f = await getFile(path);
     if (f) await gh(`${R()}/contents/${path}`, { method: 'DELETE', body: JSON.stringify({ message: `admin(${user}): delete ${path}`, sha: f.sha }) });
@@ -206,6 +228,8 @@ function readProduct(f: HTMLFormElement, base: Product): Product {
     imageAlts: alts, fragrance: val(f, 'fragrance').trim(), size: val(f, 'size').trim(), waxType: val(f, 'waxType').trim(),
     burningDuration: val(f, 'burningDuration').trim(), available: chk(f, 'available'), featured: chk(f, 'featured'),
     isNew: chk(f, 'isNew'), bestSeller: chk(f, 'bestSeller'), specs,
+    published: chk(f, 'published') ? undefined : false, costPrice: num(val(f, 'costPrice')) ?? undefined,
+    supplier: val(f, 'supplier').trim() || undefined, internalNote: val(f, 'internalNote').trim() || undefined,
   };
 }
 function readHome(f: HTMLFormElement, base: Homepage): Homepage {
@@ -225,9 +249,9 @@ let deploy: { status: string; conclusion: string | null; url: string; at: string
 const leave = () => { if (dirty && !confirm('تغییرات ذخیره‌نشده از بین می‌رود. ادامه می‌دهید؟')) return false; dirty = false; return true; };
 
 async function loadDeploy() {
-  if (!SITE_REPO) return;
+  if (!siteRepo) return;
   try {
-    const j = (await (await gh(`/repos/${SITE_REPO}/actions/workflows/deploy.yml/runs?per_page=1`)).json()) as { workflow_runs: { status: string; conclusion: string | null; html_url: string; created_at: string }[] };
+    const j = (await (await gh(`/repos/${siteRepo}/actions/workflows/deploy.yml/runs?per_page=1`)).json()) as { workflow_runs: { status: string; conclusion: string | null; html_url: string; created_at: string }[] };
     const r = j.workflow_runs[0];
     deploy = r ? { status: r.status, conclusion: r.conclusion, url: r.html_url, at: r.created_at } : null;
   } catch { deploy = null; }
@@ -238,14 +262,14 @@ function health(): { ok: boolean; text: string; tab?: Tab }[] {
   const noAlt = ps.filter((p) => p.images.some((_, i) => !p.imageAlts?.[i]?.trim())).length;
   const short = ps.filter((p) => p.description.trim().length < 40).length;
   return [
-    { ok: s.telegramUsername !== 'YOUR_TELEGRAM_USERNAME', text: 'نام کاربری تلگرام واقعی تنظیم شده است', tab: 'settings' },
+    { ok: s.telegramUsername !== 'YOUR_TELEGRAM_USERNAME', text: 'نام کاربری تلگرام واقعی تنظیم شده است', tab: 'advanced' },
     { ok: ps.length > 0, text: 'حداقل یک محصول ثبت شده است', tab: 'products' },
     { ok: noAlt === 0, text: noAlt ? `${faNum(noAlt)} محصول تصویر بدون متن جایگزین (alt) دارد` : 'همه تصاویر متن جایگزین دارند', tab: 'products' },
     { ok: short === 0, text: short ? `${faNum(short)} محصول توضیحات کوتاه دارد (بهتر است ۴۰ نویسه یا بیشتر)` : 'توضیحات محصولات کافی است', tab: 'products' },
     { ok: h.featuredIds.length > 0, text: 'محصولات ویژه صفحه اصلی انتخاب شده‌اند', tab: 'homepage' },
-    { ok: !!(c.phone || c.email || c.address), text: 'حداقل یک راه تماس ثبت شده است', tab: 'settings' },
-    { ok: !!s.shippingInfo.trim(), text: 'اطلاعات ارسال نوشته شده است', tab: 'settings' },
-    { ok: !!SITE_REPO, text: 'انتشار خودکار فعال است' },
+    { ok: !!(c.phone || c.email || c.address), text: 'حداقل یک راه تماس ثبت شده است', tab: 'advanced' },
+    { ok: !!s.shippingInfo.trim(), text: 'اطلاعات ارسال نوشته شده است', tab: 'advanced' },
+    { ok: !!siteRepo, text: 'مخزن عمومی سایت تنظیم شده است (برای انتشار خودکار)', tab: 'advanced' },
   ];
 }
 
@@ -260,7 +284,7 @@ function exportBackup() {
 
 /* ---------- views ---------- */
 function shell(body: Safe): Safe {
-  const T: [Tab, string, string][] = [['overview', '◈', 'نمای کلی'], ['products', '▣', 'محصولات'], ['orders', '☰', 'سفارش‌ها'], ['homepage', '⌂', 'صفحه اصلی'], ['settings', '⚙', 'تنظیمات']];
+  const T: [Tab, string, string][] = [['overview', '◈', 'نمای کلی'], ['products', '▣', 'محصولات'], ['orders', '☰', 'سفارش‌ها'], ['homepage', '⌂', 'صفحه اصلی'], ['appearance', '✦', 'ظاهر سایت'], ['images', '▤', 'تصاویر'], ['advanced', '⚙', 'تنظیمات پیشرفته']];
   return html`<div class="app"><aside class="side"><div class="brandmark">🕯 ${db.settings!.content.brandName}<small>پنل مدیریت</small></div>
     <nav aria-label="بخش‌ها">${T.map(([k, i, t]) => html`<button type="button" data-act="tab" data-id="${k}" aria-current="${tab === k}"><span aria-hidden="true">${i}</span>${t}</button>`)}</nav>
     <div class="who"><span class="muted">${user}</span><div class="row-actions"><a class="btn ghost sm" href="${SITE_URL}" target="_blank" rel="noopener">مشاهده سایت ↗</a><button class="btn ghost sm" data-act="reload" type="button">بازخوانی</button><button class="btn ghost sm" data-act="logout" type="button">خروج</button></div></div></aside>
@@ -278,6 +302,8 @@ function overview(): Safe {
   const dep = !deploy ? ['نامشخص', ''] : deploy.status !== 'completed' ? ['در حال انتشار…', 'warn'] : deploy.conclusion === 'success' ? ['آخرین انتشار موفق بود', 'ok'] : ['آخرین انتشار ناموفق بود', 'bad'];
   return html`<h1>نمای کلی</h1>
     <div class="stats">${stat(faNum(ps.length), 'کل محصولات')}${stat(faNum(ps.filter((p) => p.available).length), 'موجود', 'ok')}${stat(faNum(ps.filter((p) => !p.available).length), 'ناموجود', 'bad')}${stat(faNum(ps.filter((p) => p.featured).length), 'ویژه')}${stat(faNum(ps.filter(onSale).length), 'تخفیف‌دار')}${stat(faNum(avg), `میانگین قیمت (${db.settings!.content.currency})`)}</div>
+    ${quickSetup()}
+    ${repoCards()}
     <div class="cols2">
       <div class="panel"><h2>انتشار سایت</h2><p><span class="pill ${dep[1]}">${dep[0]}</span> ${deploy ? html`<span class="muted">${dateFa(deploy.at)}</span> <a href="${deploy.url}" target="_blank" rel="noopener">جزئیات ↗</a>` : ''}</p>
         ${syncPill()}<div class="row-actions"><button class="btn primary sm" type="button" data-act="deploynow">انتشار دستی</button><button class="btn ghost sm" type="button" data-act="refreshdeploy">بروزرسانی وضعیت</button><button class="btn ghost sm" type="button" data-act="new">+ محصول جدید</button><button class="btn ghost sm" type="button" data-act="export">دانلود پشتیبان JSON</button></div></div>
@@ -295,6 +321,7 @@ function filtered(): Product[] {
   else if (pf.status === 'out') l = l.filter((p) => !p.available);
   else if (pf.status === 'feat') l = l.filter((p) => p.featured);
   else if (pf.status === 'sale') l = l.filter(onSale);
+  else if (pf.status === 'draft') l = l.filter((p) => p.published === false);
   if (pf.sort === 'name') l = [...l].sort((a, b) => a.name.localeCompare(b.name, 'fa'));
   return l;
 }
@@ -304,7 +331,7 @@ function productRows(): Safe {
   const l = filtered();
   return html`<p class="muted">${faNum(l.length)} از ${faNum(db.products!.content.length)} محصول</p><div class="tbl"><table><thead><tr><th></th><th>نام</th><th>دسته</th><th>قیمت</th><th>موجودی</th><th></th></tr></thead><tbody>
     ${l.length ? l.map((p) => html`<tr><td><img class="thumb" data-p="${p.images[0] ?? ''}" alt="" /></td>
-      <td><strong>${p.name}</strong><br /><small class="muted" dir="ltr">${p.id}</small> ${p.featured ? html`<span class="tag">ویژه</span>` : ''}${p.isNew ? html`<span class="tag">جدید</span>` : ''}${p.bestSeller ? html`<span class="tag">پرفروش</span>` : ''}</td>
+      <td><strong>${p.name}</strong><br /><small class="muted" dir="ltr">${p.id}</small> ${p.published === false ? html`<span class="tag draft">پیش‌نویس</span>` : ''}${p.featured ? html`<span class="tag">ویژه</span>` : ''}${p.isNew ? html`<span class="tag">جدید</span>` : ''}${p.bestSeller ? html`<span class="tag">پرفروش</span>` : ''}</td>
       <td>${cats.find((c) => c.id === p.category)?.name ?? p.category}</td>
       <td>${faNum(unitPrice(p))} ${cur}${onSale(p) ? html`<br /><del class="muted">${faNum(p.price)}</del>` : ''}</td>
       <td><button class="switch" type="button" role="switch" aria-checked="${p.available}" aria-label="موجودی ${p.name}" data-act="toggle" data-id="${p.id}"></button></td>
@@ -319,7 +346,7 @@ function productsView(): Safe {
     <form class="panel toolbar" data-form="pfilter" role="search">
       <label>جستجو<input type="search" name="q" value="${pf.q}" placeholder="نام، رایحه…" /></label>
       <label>دسته<select name="cat"><option value="">همه</option>${cats.map((c) => html`<option value="${c.id}" ${c.id === pf.cat ? html`selected` : ''}>${c.name}</option>`)}</select></label>
-      <label>وضعیت<select name="status">${[['', 'همه'], ['in', 'موجود'], ['out', 'ناموجود'], ['feat', 'ویژه'], ['sale', 'تخفیف‌دار']].map(([v, t]) => html`<option value="${v}" ${v === pf.status ? html`selected` : ''}>${t}</option>`)}</select></label>
+      <label>وضعیت<select name="status">${[['', 'همه'], ['in', 'موجود'], ['out', 'ناموجود'], ['feat', 'ویژه'], ['sale', 'تخفیف‌دار'], ['draft', 'پیش‌نویس']].map(([v, t]) => html`<option value="${v}" ${v === pf.status ? html`selected` : ''}>${t}</option>`)}</select></label>
       <label>مرتب‌سازی<select name="sort">${[['new', 'جدیدترین'], ['name', 'نام'], ['asc', 'ارزان‌ترین'], ['desc', 'گران‌ترین']].map(([v, t]) => html`<option value="${v}" ${v === pf.sort ? html`selected` : ''}>${t}</option>`)}</select></label>
       <button class="btn primary" type="button" data-act="new">+ افزودن محصول</button></form>
     ${syncPill()}<div class="panel" id="ptable">${productRows()}</div>
@@ -339,7 +366,7 @@ function previewPanel(p: Product): Safe {
   const pct = sale ? Math.round((1 - (p.discountPrice as number) / p.price) * 100) : 0;
   const title = `${p.name || 'نام محصول'} | ${brand}`;
   const tl = title.length, dl = p.description.length;
-  return html`<div class="pvcard"><div class="pvimg">${p.images[0] ? html`<img data-p="${p.images[0]}" alt="" />` : html`<span class="muted">بدون تصویر</span>`}${sale ? html`<b class="pct">٪${faNum(pct)}</b>` : ''}${!p.available ? html`<b class="pct off">ناموجود</b>` : ''}</div>
+  return html`<div class="pvcard"><div class="pvimg">${p.images[0] ? html`<img data-p="${p.images[0]}" alt="" />` : html`<span class="muted">بدون تصویر</span>`}${sale ? html`<b class="pct">٪${faNum(pct)}</b>` : ''}${p.published === false ? html`<b class="pct off">پیش‌نویس</b>` : !p.available ? html`<b class="pct off">ناموجود</b>` : ''}</div>
     <div class="pvb"><strong>${p.name || 'نام محصول'}</strong><span class="muted">${p.fragrance}</span><span class="price">${Number.isFinite(p.price) ? `${faNum((sale ? p.discountPrice : p.price) as number)} ${cur}` : '—'} ${sale ? html`<del class="muted">${faNum(p.price)}</del>` : ''}</span></div></div>
     <div class="serp"><small dir="ltr">${SITE_URL}products/${p.id}/</small><h4>${title}</h4><p>${p.description.slice(0, 155) || 'توضیحات محصول اینجا در گوگل نمایش داده می‌شود…'}</p></div>
     <ul class="tips"><li class="${tl <= 60 ? 'ok' : 'warn'}">طول عنوان: ${faNum(tl)} از ۶۰</li><li class="${dl >= 70 && dl <= 155 ? 'ok' : 'warn'}">طول توضیح: ${faNum(dl)} (ایده‌آل ۷۰ تا ۱۵۵)</li><li class="${p.images.length && (p.imageAlts ?? []).every((a) => a.trim()) ? 'ok' : 'warn'}">متن جایگزین (alt) تصاویر</li><li class="${p.images.length > 1 ? 'ok' : 'warn'}">بیش از یک تصویر</li></ul>`;
@@ -360,6 +387,9 @@ function productForm(): Safe {
     <label>توضیحات<textarea name="description" maxlength="2000" required>${p.description}</textarea></label>
     <label>مشخصات بیشتر (هر خط «عنوان: مقدار»)<textarea name="specs">${sp}</textarea></label>
     <div class="checks"><label class="chk"><input type="checkbox" name="available" ${p.available ? html`checked` : ''}/>موجود</label><label class="chk"><input type="checkbox" name="featured" ${p.featured ? html`checked` : ''}/>ویژه</label><label class="chk"><input type="checkbox" name="isNew" ${p.isNew ? html`checked` : ''}/>جدید</label><label class="chk"><input type="checkbox" name="bestSeller" ${p.bestSeller ? html`checked` : ''}/>پرفروش</label></div>
+    <div class="privbox"><h3>🔒 اطلاعات خصوصی <small class="muted">(فقط در مخزن خصوصی می‌ماند و هرگز در سایت منتشر نمی‌شود)</small></h3>
+      <div class="grid2"><label class="chk"><input type="checkbox" name="published" ${p.published === false ? '' : html`checked`} />نمایش در سایت <small class="muted">(خاموش = پیش‌نویس؛ در سایت دیده نمی‌شود)</small></label>${field('قیمت تمام‌شده (خصوصی)', 'costPrice', p.costPrice ?? '', 'inputmode="numeric"')}${field('تأمین‌کننده (خصوصی)', 'supplier', p.supplier ?? '', 'maxlength="120"')}</div>
+      <label>یادداشت داخلی (خصوصی)<textarea name="internalNote" maxlength="500">${p.internalNote ?? ''}</textarea></label></div>
     <h3>تصاویر (۱ تا ۸؛ اولی تصویر اصلی است)</h3>
     ${p.images.map((src, i) => html`<div class="imgrow"><img data-p="${src}" alt="" /><label>متن جایگزین (alt)<input name="alt${i}" value="${p.imageAlts?.[i] ?? ''}" maxlength="160" /></label><div class="row-actions">${i > 0 ? html`<button class="btn ghost sm" type="button" data-act="mainimg" data-id="${i}">اصلی</button><button class="btn ghost sm" type="button" data-act="upimg" data-id="${i}" aria-label="بالا">↑</button>` : ''}${i < p.images.length - 1 ? html`<button class="btn ghost sm" type="button" data-act="downimg" data-id="${i}" aria-label="پایین">↓</button>` : ''}<button class="btn danger sm" type="button" data-act="rmimg" data-id="${i}">حذف</button></div></div>`)}
     <label>افزودن تصویر (JPG, PNG, WebP)<input type="file" data-upload="product" accept="image/jpeg,image/png,image/webp" /></label>
@@ -389,39 +419,250 @@ function homeView(): Safe {
     <p><button class="btn primary" type="submit">ذخیره صفحه اصلی</button></p></form>`;
 }
 
+/* ---------- settings: generic data-path binding, draft, defaults ---------- */
+type Rec = Record<string, unknown>;
+const cur = (): Settings => sd ?? db.settings!.content;
+function getPath(o: unknown, p: string): unknown { return p.split('.').reduce<unknown>((a, k) => (a == null ? undefined : (a as Rec)[k]), o); }
+function setPath(o: Rec, path: string, v: unknown) {
+  const ks = path.split('.');
+  let a = o;
+  ks.forEach((k, i) => {
+    if (i === ks.length - 1) { a[k] = v; return; }
+    if (typeof a[k] !== 'object' || a[k] === null) a[k] = /^\d+$/.test(ks[i + 1] as string) ? [] : {};
+    a = a[k] as Rec;
+  });
+}
+function applyPaths(f: HTMLFormElement, obj: Rec) {
+  const els = Array.from(f.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('[data-path]'));
+  for (const pre of ['home.sections', 'home.benefits', 'home.steps']) if (els.some((e) => (e.dataset.path ?? '').startsWith(`${pre}.`))) setPath(obj, pre, []);
+  els.forEach((el) => {
+    const path = el.dataset.path as string;
+    const t = el instanceof HTMLInputElement ? el.type : '';
+    setPath(obj, path, t === 'checkbox' ? (el as HTMLInputElement).checked : t === 'number' || t === 'range' || el.dataset.num !== undefined ? Number(el.value) : el.value.trim());
+  });
+}
+/** Optional blocks must exist (with all fields) before individual paths are written into them. */
+function ensureDefaults(s: Settings): Settings {
+  s.banner ??= { enabled: false, text: '', link: '', bg: '#A9D6E5', color: '#263746' };
+  s.wallpaper ??= { enabled: false, image: '', color: '', overlay: 0.7 };
+  s.orders ??= { enabled: true, requireAddress: false, messageTemplate: DEFAULT_TEMPLATE };
+  return s;
+}
+function finalize(s: Settings): Settings {
+  s.theme = resolveTheme(s); s.home = resolveHome(s); s.marketing = resolveMarketing(s);
+  s.images ??= {};
+  return s;
+}
+function applyPreset(s: Settings, id: string) {
+  const p = PRESETS.find((x) => x.id === id);
+  if (!p) return;
+  const t = resolveTheme(s);
+  s.theme = { ...t, colors: { ...p.colors }, bg: { ...t.bg, color: p.bg.color, color2: p.bg.color2 } };
+}
+function syncSettings() {
+  const f = $<HTMLFormElement>('form[data-form=settings]');
+  if (!f) return;
+  try { sd = buildSettings(f, cur()); } catch { /* keep the previous draft */ }
+}
+const acc = (id: string) => raw(`data-acc="${id}" ${accOpen.has(id) ? 'open' : ''}`);
+const inp = (path: string, label: string, v: string | number, type = 'text', attrs = '') => html`<label>${label}<input data-path="${path}" type="${type}" value="${v}" ${raw(attrs)} /></label>`;
+const chkp = (path: string, label: string, v: boolean) => html`<label class="chk"><input type="checkbox" data-path="${path}" ${v ? html`checked` : ''} />${label}</label>`;
+const clr = (path: string, label: string, v: string) => html`<label>${label}<input type="color" data-path="${path}" value="${v}" /></label>`;
+const rng = (path: string, label: string, v: number, min: number, max: number, step: number) => html`<label>${label} <output>${v}</output><input type="range" data-path="${path}" min="${min}" max="${max}" step="${step}" value="${v}" /></label>`;
+const isoLocal = (iso: string) => { const d = iso ? new Date(iso) : null; if (!d || Number.isNaN(d.getTime())) return ''; const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+function repoCards(): Safe {
+  const priv = creds?.repo ?? '', pub = siteRepo;
+  const link = (r: string) => (r ? html`<a href="https://github.com/${r}" target="_blank" rel="noopener noreferrer" dir="ltr">${r}</a>` : html`<span class="muted">تنظیم نشده</span>`);
+  return html`<div class="cols2"><div class="panel repo"><h3>🌐 مخزن عمومی (سایت)</h3><p>${link(pub)}</p><p class="muted">خود سایت؛ همه می‌توانند ببینند.</p></div>
+    <div class="panel repo"><h3>🔒 مخزن خصوصی (داده‌ها)</h3><p>${link(priv)}</p><p class="muted">محصولات، سفارش‌ها و اطلاعات مشتری؛ فقط شما.</p></div></div>`;
+}
+function quickSetup(): Safe {
+  const s = ensureDefaults(structuredClone(db.settings!.content));
+  const mk = resolveMarketing(s), t = resolveTheme(s);
+  return html`<form class="panel quick" data-form="quick"><h2>⚡ تنظیمات اولیه و مهم</h2><p class="muted">مهم‌ترین چیزها همین‌جاست. جزئیات بیشتر در «تنظیمات بیشتر».</p>
+    <div class="grid2">${inp('brandName', 'نام فروشگاه', s.brandName, 'text', 'required maxlength="60"')}
+      <label>یوزرنیم تلگرام (بدون @؛ سفارش‌ها به این آدرس می‌رود)<input data-path="telegramUsername" value="${s.telegramUsername}" dir="ltr" required /><small><a href="https://t.me/${s.telegramUsername}" target="_blank" rel="noopener noreferrer">تست لینک ↗</a></small></label>
+      ${inp('currency', 'واحد پول', s.currency, 'text', 'required maxlength="20"')}${inp('shippingInfo', 'توضیح کوتاه ارسال', s.shippingInfo, 'text', 'maxlength="600"')}</div>
+    <div class="checks">${chkp('orders.enabled', 'ثبت و ذخیره سفارش از سایت', s.orders!.enabled)}${chkp('banner.enabled', 'اطلاعیه بالای سایت', s.banner!.enabled)}${chkp('marketing.stickyCta', 'دکمه شناور تلگرام', mk.stickyCta)}${chkp('theme.glass.enabled', 'ظاهر شیشه‌ای', t.glass.enabled)}${chkp('marketing.freeShipping.enabled', 'نوار ارسال رایگان در سبد', mk.freeShipping.enabled)}</div>
+    <div class="grid2">${inp('banner.text', 'متن اطلاعیه بالای سایت', s.banner!.text, 'text', 'maxlength="200"')}${inp('marketing.freeShipping.threshold', `حداقل خرید برای ارسال رایگان (${s.currency})`, mk.freeShipping.threshold, 'number', 'min="0" step="1000"')}</div>
+    <h3>پالت رنگ سایت (اختیاری)</h3><div class="presets">${PRESETS.map((p) => html`<label class="chipbtn"><input type="radio" name="preset" value="${p.id}" /><span class="sw"><i style="background:${p.colors.primary}"></i><i style="background:${p.colors.accent}"></i><i style="background:${p.colors.accentInk}"></i></span>${p.label}</label>`)}</div>
+    <p><button class="btn primary" type="submit">ذخیره تنظیمات اولیه</button></p></form>`;
+}
+
+function secRepos(): Safe {
+  const priv = creds?.repo ?? '', pub = siteRepo;
+  const row = (r: string) => (r ? html`<p><a href="https://github.com/${r}" target="_blank" rel="noopener noreferrer" dir="ltr">${r}</a> <button class="link" type="button" data-act="copyrepo" data-id="${r}">کپی</button></p>` : html`<p class="muted">آدرس تنظیم نشده است (متغیر VITE_SITE_REPO هنگام build).</p>`);
+  return html`<details class="acc" ${acc('repos')}><summary>🔗 مخازن گیت‌هاب: هر کدام برای چیست؟</summary>
+    <p class="muted">پروژه از دو مخزن جدا استفاده می‌کند تا اطلاعات فروشگاه و مشتری‌ها دیده نشود.</p>
+    <div class="cols2"><div class="repo"><h3>🌐 مخزن عمومی — خود سایت</h3>${row(pub)}
+      <ul><li>کد سایت و فایل‌های عمومی؛ GitHub Pages از همین‌جا منتشر می‌کند</li><li>همه می‌توانند آن را ببینند</li><li>هرگز اطلاعات مشتری، سفارش یا توکن در آن نگذارید</li><li>Secretها: <bdi dir="ltr">DATA_REPO</bdi> و <bdi dir="ltr">DATA_REPO_TOKEN</bdi> (فقط برای خواندن داده‌ها هنگام انتشار)</li></ul></div>
+    <div class="repo"><h3>🔒 مخزن خصوصی — داده‌ها</h3>${row(priv)}
+      <ul><li>محصولات، دسته‌ها، تنظیمات و تصاویر آپلودشده</li><li>سفارش‌ها و اطلاعات مشتری (پوشه orders)</li><li>فقط شما با توکن به آن دسترسی دارید؛ این پنل فقط روی همین مخزن می‌نویسد</li><li>هنگام انتشار، سایت محصولات و تصاویر را از اینجا می‌خواند؛ پوشه orders هرگز وارد سایت نمی‌شود</li></ul></div></div>
+    <p class="notice">مسیر داده: پنل ← مخزن خصوصی ← (Action با Secret) ← مخزن عمومی ← سایت. سفارش مشتری از طریق Worker مستقیم به مخزن خصوصی می‌رود.</p></details>`;
+}
+function secTheme(): Safe {
+  const t = resolveTheme(cur()), c = t.colors;
+  const warn = (a: string, b: string, l: string) => (contrast(a, b) < 4.5 ? html`<p class="warnc">⚠ خوانایی کم (${contrast(a, b).toFixed(1)} از ۴٫۵): ${l}</p>` : '');
+  return html`<details class="acc" ${acc('theme')}><summary>🎨 ظاهر و رنگ‌ها</summary>
+    <p class="muted">پالت آماده انتخاب کنید یا رنگ‌ها را خودتان تنظیم کنید. پیش‌نمایش زنده پایین است.</p>
+    <div class="presets">${PRESETS.map((p) => html`<button type="button" class="chipbtn" data-act="preset" data-id="${p.id}"><span class="sw"><i style="background:${p.colors.primary}"></i><i style="background:${p.colors.accent}"></i><i style="background:${p.colors.accentInk}"></i></span>${p.label}</button>`)}</div>
+    <div class="grid2">${clr('theme.colors.primary', 'رنگ اصلی', c.primary)}${clr('theme.colors.secondary', 'رنگ روشن مکمل', c.secondary)}${clr('theme.colors.bg', 'رنگ زمینه', c.bg)}${clr('theme.colors.accent', 'رنگ تأکیدی', c.accent)}${clr('theme.colors.accentInk', 'رنگ تیره (دکمه‌ها و لینک‌ها)', c.accentInk)}${clr('theme.colors.text', 'رنگ متن', c.text)}</div>
+    ${warn(c.accentInk, '#FFFFFF', 'رنگ دکمه‌ها با متن سفید')}${warn(c.text, c.bg, 'متن روی زمینه')}
+    <div class="grid2">${rng('theme.radius', 'گردی گوشه‌ها', t.radius, 0, 32, 1)}<label>شکل دکمه‌ها<select data-path="theme.buttons"><option value="pill" ${t.buttons === 'pill' ? html`selected` : ''}>گرد کامل</option><option value="rounded" ${t.buttons === 'rounded' ? html`selected` : ''}>گوشه‌گرد</option></select></label>${chkp('theme.motion', 'انیمیشن‌ها', t.motion)}</div>
+    <h3>افکت شیشه‌ای</h3><div class="grid2">${chkp('theme.glass.enabled', 'شیشه‌ای روی کارت‌ها، هدر و فوتر', t.glass.enabled)}${rng('theme.glass.blur', 'میزان محو پشت شیشه', t.glass.blur, 0, 30, 1)}${rng('theme.glass.opacity', 'غلظت شیشه (کمتر = شفاف‌تر)', t.glass.opacity, 0.3, 1, 0.02)}</div>
+    <div id="themeprev" class="tp"><div class="tp-card"><strong>پیش‌نمایش</strong><p>نمونه کارت شیشه‌ای</p><span class="tp-btn">خرید</span></div></div></details>`;
+}
+function secBg(): Safe {
+  const b = resolveTheme(cur()).bg;
+  return html`<details class="acc" ${acc('bg')}><summary>🌈 پس‌زمینه سایت</summary><div class="grid2">
+    <label>نوع<select data-path="theme.bg.mode"><option value="gradient" ${b.mode === 'gradient' ? html`selected` : ''}>گرادیان</option><option value="solid" ${b.mode === 'solid' ? html`selected` : ''}>تک‌رنگ</option></select></label>
+    ${clr('theme.bg.color', 'رنگ اول', b.color)}${clr('theme.bg.color2', 'رنگ دوم (گرادیان)', b.color2)}${rng('theme.bg.angle', 'زاویه گرادیان', b.angle, 0, 360, 5)}
+    ${chkp('theme.bg.blobs', 'لکه‌های نور نرم و متحرک (پشت شیشه زیبا می‌شود)', b.blobs)}${rng('theme.bg.imageBlur', 'محو کردن عکس پس‌زمینه', b.imageBlur, 0, 30, 1)}</div>
+    <p class="muted">اگر «تصویر زمینه» را فعال کنید، عکس جایگزین گرادیان می‌شود.</p></details>`;
+}
+const NO_IMG = ['categories', 'banners'];
+function secImages(): Safe {
+  const s = cur();
+  return html`<details class="acc" ${acc('images')}><summary>🖼 جای تصاویر در سایت</summary>
+    <p class="muted">برای هر بخش مشخص کنید عکس نمایش داده شود یا نه، و عکس را انتخاب کنید.</p>
+    ${IMAGE_SLOTS.map((k) => { const o = slotOf(s, k); const [label, where] = SLOT_LABEL[k]; return html`<div class="slot"><div><strong>${label}</strong><small class="muted">${where}</small></div>
+      <label class="chk"><input type="checkbox" data-path="images.${k}.show" ${o.show ? html`checked` : ''} />نمایش</label><input type="hidden" data-path="images.${k}.image" value="${o.image}" />
+      ${NO_IMG.includes(k) ? html`<span></span><span></span>` : html`<div class="slotimg">${o.image ? html`<img data-p="${o.image}" alt="" />` : html`<span class="muted">بدون تصویر</span>`}</div>
+      <div class="row-actions"><button class="btn ghost sm" type="button" data-act="pickslot" data-id="${k}">انتخاب تصویر</button>${o.image ? html`<button class="btn danger sm" type="button" data-act="clearslot" data-id="${k}">حذف</button>` : ''}</div>`}</div>`; })}</details>`;
+}
+function secHome(): Safe {
+  const h = resolveHome(cur());
+  return html`<details class="acc" ${acc('home')}><summary>🏠 بخش‌های صفحه اصلی و جذب مشتری</summary>
+    <h3>ترتیب و نمایش بخش‌ها</h3>
+    ${h.sections.map((x, i, a) => html`<div class="secrow"><label class="chk"><input type="checkbox" data-path="home.sections.${i}.show" ${x.show ? html`checked` : ''} />${SECTION_LABEL[x.id]}</label><input type="hidden" data-path="home.sections.${i}.id" value="${x.id}" />
+      <div class="row-actions"><button class="btn ghost sm" type="button" data-act="secup" data-id="${i}" ${i === 0 ? html`disabled` : ''} aria-label="بالا">↑</button><button class="btn ghost sm" type="button" data-act="secdown" data-id="${i}" ${i === a.length - 1 ? html`disabled` : ''} aria-label="پایین">↓</button></div></div>`)}
+    <h3>نوار مزایا</h3><p class="muted">چند مزیت واقعی فروشگاه شما (آیکون، عنوان، توضیح کوتاه). فقط چیزهایی بنویسید که درست است.</p>
+    ${h.benefits.map((b, i) => html`<div class="grid2 itemrow">${inp(`home.benefits.${i}.icon`, 'آیکون (ایموجی)', b.icon, 'text', 'maxlength="8"')}${inp(`home.benefits.${i}.title`, 'عنوان', b.title, 'text', 'maxlength="60"')}${inp(`home.benefits.${i}.text`, 'توضیح', b.text, 'text', 'maxlength="160"')}<button class="btn danger sm" type="button" data-act="rmbenefit" data-id="${i}">حذف</button></div>`)}
+    <div class="row-actions"><button class="btn ghost sm" type="button" data-act="addbenefit">+ مزیت جدید</button><button class="btn ghost sm" type="button" data-act="benefitpreset">افزودن نمونه‌ها (قابل ویرایش)</button></div>
+    <h3>مراحل سفارش</h3>
+    ${h.steps.map((st, i) => html`<div class="grid2 itemrow">${inp(`home.steps.${i}.title`, 'عنوان مرحله', st.title, 'text', 'maxlength="60"')}${inp(`home.steps.${i}.text`, 'توضیح', st.text, 'text', 'maxlength="160"')}<button class="btn danger sm" type="button" data-act="rmstep" data-id="${i}">حذف</button></div>`)}
+    <div class="row-actions"><button class="btn ghost sm" type="button" data-act="addstep">+ مرحله جدید</button><button class="btn ghost sm" type="button" data-act="resetsteps">بازگشت به پیش‌فرض</button></div>
+    <h3>پیشنهاد ویژه با شمارنده</h3><p class="muted">فقط برای تخفیف یا پیشنهاد واقعی با تاریخ پایان درست؛ بعد از پایان خودکار مخفی می‌شود.</p>
+    <div class="grid2">${chkp('home.promo.enabled', 'نمایش پیشنهاد ویژه', h.promo.enabled)}${inp('home.promo.title', 'عنوان', h.promo.title, 'text', 'maxlength="80"')}${inp('home.promo.text', 'توضیح', h.promo.text, 'text', 'maxlength="200"')}${inp('home.promo.link', 'لینک (#/shop یا https://)', h.promo.link)}
+      <label>پایان پیشنهاد (اختیاری)<input type="datetime-local" name="promoEnd" value="${isoLocal(h.promo.endsAt)}" /></label></div></details>`;
+}
+function secMarketing(): Safe {
+  const m = resolveMarketing(cur());
+  return html`<details class="acc" ${acc('mkt')}><summary>📣 جذب و تبدیل مشتری</summary><div class="grid2">
+    ${chkp('marketing.freeShipping.enabled', 'نوار پیشرفت ارسال رایگان در سبد خرید', m.freeShipping.enabled)}${inp('marketing.freeShipping.threshold', 'حداقل مبلغ برای ارسال رایگان', m.freeShipping.threshold, 'number', 'min="0" step="1000"')}
+    ${chkp('marketing.stickyCta', 'دکمه شناور «پرسش و سفارش در تلگرام»', m.stickyCta)}${chkp('marketing.askOnProduct', 'دکمه «پرسش درباره این محصول» در صفحه محصول', m.askOnProduct)}
+    ${chkp('marketing.recentlyViewed', 'بخش «اخیراً دیده‌اید»', m.recentlyViewed)}${chkp('marketing.crossSell', 'پیشنهاد محصولات دیگر در سبد خرید', m.crossSell)}</div>
+    <label>یادداشت زیر دکمه خرید در صفحه محصول (مثلاً زمان ارسال)<input data-path="marketing.productNote" value="${m.productNote}" maxlength="200" /></label></details>`;
+}
+
+function updateThemePreview() {
+  const f = $<HTMLFormElement>('form[data-form=settings]'), el = $('#themeprev');
+  if (!f || !el) return;
+  const tmp = structuredClone(cur());
+  applyPaths(f, tmp as unknown as Rec);
+  const t = resolveTheme(tmp), c = t.colors;
+  const v: Record<string, string> = { '--p': c.primary, '--s': c.secondary, '--a': c.accent, '--ink': c.accentInk, '--t': c.text, '--r': `${t.radius}px`, '--ga': String(t.glass.opacity), '--gb': `${t.glass.enabled ? t.glass.blur : 0}px`,
+    '--bgi': t.bg.mode === 'gradient' ? `linear-gradient(${t.bg.angle}deg, ${t.bg.color}, ${t.bg.color2})` : t.bg.color, '--btn': t.buttons === 'pill' ? '99px' : '8px' };
+  Object.entries(v).forEach(([k, x]) => el.style.setProperty(k, x));
+  el.classList.toggle('blobs', t.bg.blobs);
+}
+
+async function listLibrary(force = false): Promise<string[]> {
+  if (libCache && !force) return libCache;
+  const t = (await (await gh(`${R()}/git/trees/${encodeURIComponent(branch)}?recursive=1`)).json()) as { tree: { path: string; type: string }[] };
+  libCache = t.tree.filter((x) => x.type === 'blob' && /^images\/(products|banners|categories)\/.+\.(webp|jpe?g|png)$/.test(x.path)).map((x) => x.path).reverse();
+  return libCache;
+}
+/** Modal image chooser: existing library (private repo), upload, or https URL. Resolves with a path/URL or null. */
+function pickImage(dir: 'products' | 'banners' | 'categories'): Promise<string | null> {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'picker';
+    document.body.append(dlg);
+    let done = false;
+    const finish = (v: string | null) => { if (done) return; done = true; dlg.close(); dlg.remove(); resolve(v); };
+    const showErr = (x: unknown) => { const e = dlg.querySelector<HTMLElement>('[data-picker-err]'); if (e) { e.textContent = x instanceof Error ? x.message : 'خطا'; e.hidden = false; } };
+    dlg.addEventListener('cancel', () => finish(null));
+    dlg.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const pick = t.closest<HTMLElement>('[data-pick]');
+      if (pick?.dataset.pick) return finish(pick.dataset.pick);
+      if (t.closest('[data-picker-cancel]') || t === dlg) return finish(null);
+      if (t.closest('[data-picker-useurl]')) {
+        const u = (dlg.querySelector<HTMLInputElement>('[data-picker-url]')?.value ?? '').trim();
+        if (!u.startsWith('https://') || !isImageRef(u)) return showErr(new Error('لینک باید با https:// شروع شود و معتبر باشد.'));
+        probe(u).then(() => finish(u)).catch(showErr);
+      }
+    });
+    dlg.addEventListener('change', (e) => {
+      const i = e.target as HTMLInputElement;
+      const f = i.matches('[data-picker-file]') ? i.files?.[0] : undefined;
+      if (f) upload(f, dir, 'image').then((rel) => { libCache = null; finish(rel); }).catch(showErr);
+    });
+    listLibrary().catch(() => [] as string[]).then((lib) => {
+      mount(dlg, html`<h2>انتخاب تصویر</h2>${lib.length ? html`<div class="picker-grid">${lib.slice(0, 60).map((p) => html`<button type="button" class="pick" data-pick="${p}"><img data-p="${p}" alt="" loading="lazy" /></button>`)}</div>` : html`<p class="muted">هنوز تصویری در مخزن خصوصی نیست؛ یکی آپلود کنید.</p>`}
+        <div class="grid2"><label>آپلود تصویر جدید<input type="file" data-picker-file accept="image/jpeg,image/png,image/webp" /></label><div class="urlrow"><label>یا لینک تصویر (https)<input data-picker-url dir="ltr" placeholder="https://…" /></label><button class="btn ghost sm" type="button" data-picker-useurl>استفاده</button></div></div>
+        <p class="errors" data-picker-err hidden></p><div class="row-actions"><button class="btn ghost" type="button" data-picker-cancel>انصراف</button></div>`);
+      hydrate(); dlg.showModal();
+    });
+  });
+}
+
+function buildSettings(f: HTMLFormElement, cur: Settings): Settings {
+  let groups: Settings['customOrder']['groups'];
+  try { groups = JSON.parse(val(f, 'groups')) as typeof groups; } catch { throw new Error('JSON گزینه‌های سفارش سفارشی معتبر نیست.'); }
+  const s: Settings = {
+    ...cur, telegramUsername: val(f, 'tg').trim().replace(/^@/, ''), brandName: val(f, 'brandName').trim(), brandDescription: val(f, 'brandDescription').trim(),
+    currency: val(f, 'currency').trim(), shippingInfo: val(f, 'shippingInfo').trim(),
+    contact: { email: val(f, 'email').trim(), phone: val(f, 'phone').trim(), address: val(f, 'address').trim() },
+    social: { instagram: val(f, 'instagram').trim(), telegramChannel: val(f, 'telegramChannel').trim(), pinterest: val(f, 'pinterest').trim() },
+    banner: { enabled: chk(f, 'bnOn'), text: val(f, 'bnText').trim(), link: val(f, 'bnLink').trim(), bg: val(f, 'bnBg') || '#A9D6E5', color: val(f, 'bnFg') || '#263746' },
+    wallpaper: { enabled: chk(f, 'wpOn'), image: val(f, 'wpImage').trim(), color: val(f, 'wpColor').trim(), overlay: Number(val(f, 'wpOverlay') || 0.7) },
+    orders: { enabled: chk(f, 'ordOn'), requireAddress: chk(f, 'ordAddr'), messageTemplate: val(f, 'ordTpl').trim() || DEFAULT_TEMPLATE },
+    customOrder: { enabled: chk(f, 'coOn'), basePrice: num(val(f, 'coBase')) ?? 0, groups, giftPackaging: { label: val(f, 'giftLabel').trim(), extra: num(val(f, 'giftExtra')) ?? 0 } },
+  };
+  const pe = val(f, 'promoEnd');
+  if (f.elements.namedItem('promoEnd')) setPath(s as unknown as Rec, 'home.promo.endsAt', pe && !Number.isNaN(Date.parse(pe)) ? new Date(pe).toISOString() : '');
+  applyPaths(f, s as unknown as Rec);
+  return finalize(s);
+}
+
 function settingsView(): Safe {
-  const s = db.settings!.content;
+  const s = cur();
   const o = s.customOrder;
-  return html`<form class="panel" data-form="settings"><h1>تنظیمات فروشگاه</h1><div class="grid2">
+  return html`<form class="panel" data-form="settings"><h1>تنظیمات بیشتر</h1><p class="muted">تنظیمات اولیه در صفحه «نمای کلی» است؛ اینجا جزئیات است.</p>${secRepos()}${secTheme()}${secBg()}${secImages()}${secHome()}${secMarketing()}
+    <details class="acc" ${acc('shop')}><summary>🏪 اطلاعات فروشگاه، تماس و شبکه‌ها</summary><div class="grid2">
     <label>نام کاربری تلگرام (بدون @)<input name="tg" value="${s.telegramUsername}" dir="ltr" required /><small><a href="https://t.me/${s.telegramUsername}" target="_blank" rel="noopener noreferrer">تست لینک تلگرام ↗</a></small></label>${field('نام برند', 'brandName', s.brandName, 'required')}${field('واحد پول', 'currency', s.currency, 'required')}
     ${field('ایمیل', 'email', s.contact.email)}${field('تلفن', 'phone', s.contact.phone)}${field('نشانی', 'address', s.contact.address)}
     <label>اینستاگرام (https://)<input name="instagram" value="${s.social.instagram ?? ''}" dir="ltr" /></label><label>کانال تلگرام (https://)<input name="telegramChannel" value="${s.social.telegramChannel ?? ''}" dir="ltr" /></label><label>پینترست (https://)<input name="pinterest" value="${s.social.pinterest ?? ''}" dir="ltr" /></label></div>
-    <label>توضیح برند<textarea name="brandDescription">${s.brandDescription}</textarea></label><label>اطلاعات ارسال<textarea name="shippingInfo">${s.shippingInfo}</textarea></label>
+    <label>توضیح برند<textarea name="brandDescription">${s.brandDescription}</textarea></label><label>اطلاعات ارسال<textarea name="shippingInfo">${s.shippingInfo}</textarea></label></details>
     ${(() => {
       const b = s.banner ?? { enabled: false, text: '', link: '', bg: '#A9D6E5', color: '#263746' };
       const w = s.wallpaper ?? { enabled: false, image: '', color: '', overlay: 0.7 };
       const od = s.orders ?? { enabled: true, requireAddress: false, messageTemplate: DEFAULT_TEMPLATE };
-      return html`<h3>اطلاعیه بالای سایت</h3><div class="grid2"><label class="chk"><input type="checkbox" name="bnOn" ${b.enabled ? html`checked` : ''}/>نمایش اطلاعیه</label>${field('متن اطلاعیه', 'bnText', b.text, 'maxlength="200"')}
+      return html`<details class="acc" ${acc('banner')}><summary>📢 اطلاعیه بالای سایت</summary><div class="grid2"><label class="chk"><input type="checkbox" name="bnOn" ${b.enabled ? html`checked` : ''}/>نمایش اطلاعیه</label>${field('متن اطلاعیه', 'bnText', b.text, 'maxlength="200"')}
         <label>لینک (اختیاری: #/shop یا https://)<input name="bnLink" value="${b.link}" dir="ltr" /></label><label>رنگ پس‌زمینه<input type="color" name="bnBg" value="${b.bg}" /></label><label>رنگ متن<input type="color" name="bnFg" value="${b.color}" /></label></div>
-      <h3>تصویر زمینه سایت</h3><div class="grid2"><label class="chk"><input type="checkbox" name="wpOn" ${w.enabled ? html`checked` : ''}/>فعال</label>
+      </details><details class="acc" ${acc('wall')}><summary>🖼 تصویر زمینه (عکس)</summary><div class="grid2"><label class="chk"><input type="checkbox" name="wpOn" ${w.enabled ? html`checked` : ''}/>فعال</label>
         <label>تصویر (مسیر یا لینک https)<input name="wpImage" value="${w.image}" dir="ltr" /></label><label>بارگذاری تصویر<input type="file" data-upload="wp" accept="image/jpeg,image/png,image/webp" /></label>
         <label>رنگ زمینه (اختیاری، #RRGGBB)<input name="wpColor" value="${w.color}" dir="ltr" placeholder="#F7FBFD" /></label><label>شفافیت لایه سفید روی تصویر (خوانایی متن)<input type="range" name="wpOverlay" min="0" max="0.95" step="0.05" value="${w.overlay}" /></label></div>
       ${w.image ? html`<img class="wpprev" id="wpprev" data-p="${w.image}" alt="" />` : html`<img class="wpprev" id="wpprev" alt="" hidden />`}
-      <h3>ثبت سفارش و پیام</h3><div class="grid2"><label class="chk"><input type="checkbox" name="ordOn" ${od.enabled ? html`checked` : ''}/>ثبت و ذخیره سفارش از سایت</label><label class="chk"><input type="checkbox" name="ordAddr" ${od.requireAddress ? html`checked` : ''}/>نشانی الزامی باشد</label></div>
+      </details><details class="acc" ${acc('orders')}><summary>🧾 ثبت سفارش و قالب پیام</summary><div class="grid2"><label class="chk"><input type="checkbox" name="ordOn" ${od.enabled ? html`checked` : ''}/>ثبت و ذخیره سفارش از سایت</label><label class="chk"><input type="checkbox" name="ordAddr" ${od.requireAddress ? html`checked` : ''}/>نشانی الزامی باشد</label></div>
       <label>قالب پیام سفارش<textarea class="code" name="ordTpl" maxlength="2000">${od.messageTemplate}</textarea></label>
       <p class="muted">متغیرها: <bdi dir="ltr">{{code}} {{name}} {{phone}} {{address}} {{items}} {{total}} {{notes}} {{date}} {{brand}}</bdi></p>
       <div class="summary-box" id="tplprev"></div>`;
     })()}
-    <h3>سفارش سفارشی</h3><div class="grid2"><label class="chk"><input type="checkbox" name="coOn" ${o.enabled ? html`checked` : ''}/>فعال</label>${field('قیمت پایه', 'coBase', o.basePrice)}${field('برچسب بسته‌بندی هدیه', 'giftLabel', o.giftPackaging.label)}${field('هزینه بسته‌بندی هدیه', 'giftExtra', o.giftPackaging.extra)}</div>
+    </details><details class="acc" ${acc('custom')}><summary>🕯 سفارش سفارشی (شمع دلخواه)</summary><div class="grid2"><label class="chk"><input type="checkbox" name="coOn" ${o.enabled ? html`checked` : ''}/>فعال</label>${field('قیمت پایه', 'coBase', o.basePrice)}${field('برچسب بسته‌بندی هدیه', 'giftLabel', o.giftPackaging.label)}${field('هزینه بسته‌بندی هدیه', 'giftExtra', o.giftPackaging.extra)}</div>
     <label>گزینه‌ها (JSON: هر گروه آرایه‌ای از {label, extra})<textarea class="code" name="groups">${JSON.stringify(o.groups, null, 2)}</textarea></label>
-    <p><button class="btn primary" type="submit">ذخیره تنظیمات</button></p></form>`;
+    </details><p class="sticky"><button class="btn primary" type="submit">ذخیره تنظیمات (Ctrl+S)</button></p></form>`;
 }
 
 function paint() {
   if (!user) return;
-  const body = tab === 'overview' ? overview() : tab === 'products' ? productsView() : tab === 'orders' ? ordersView() : tab === 'homepage' ? homeView() : settingsView();
+  const body = tab === 'overview' ? overview() : tab === 'products' ? productsView() : tab === 'orders' ? ordersView() : tab === 'homepage' ? homeView() : tab === 'appearance' ? appearanceView() : tab === 'images' ? imagesView() : advancedView();
   mount(root, shell(body));
   hydrate();
+  updateThemePreview();
   const tp = $('#tplprev');
   if (tp) tp.textContent = tplPreview(($<HTMLTextAreaElement>('textarea[name=ordTpl]')?.value) ?? '');
 }
@@ -460,7 +701,7 @@ async function checkSync() {
     const live = (await r.json()) as Product[];
     const key = (p: Product) => JSON.stringify(p);
     const lm = new Map(live.map((p) => [p.id, key(p)]));
-    const priv = db.products!.content;
+    const priv = toPublicProducts(db.products!.content);
     let changed = priv.filter((p) => lm.get(p.id) !== key(p)).length;
     changed += live.filter((p) => !priv.some((x) => x.id === p.id)).length;
     syncInfo = { changed };
@@ -579,13 +820,31 @@ function moveImg(i: number, d: number) {
   dirty = true; paint();
 }
 
+type HomeDraft = NonNullable<Settings['home']>;
+/** Structural edits (add/remove rows) work on a draft so unsaved form values survive the re-render. */
+function editHome(fn: (h: HomeDraft) => void) {
+  syncSettings();
+  const d = structuredClone(cur());
+  const h: HomeDraft = { ...resolveHome(d) };
+  fn(h);
+  d.home = h; sd = d; dirty = true; paint();
+}
+function moveSection(i: number, delta: number) {
+  editHome((h) => {
+    const a = [...(h.sections ?? [])], j = i + delta;
+    if (j < 0 || j >= a.length) return;
+    [a[i], a[j]] = [a[j] as (typeof a)[number], a[i] as (typeof a)[number]];
+    h.sections = a;
+  });
+}
+
 const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
   tab: async (el) => {
     if (!leave()) return;
-    tab = el.dataset.id as Tab; editing = null; hp = null; cd = null; errors = []; paint();
+    tab = el.dataset.id as Tab; editing = null; hp = null; cd = null; sd = null; errors = []; paint();
     if (tab === 'orders' && orders === null) { await loadOrders(); paint(); }
   },
-  reload: async () => { dirty = false; await loadAll(); orders = null; cd = null; hp = null; editing = null; errors = []; paint(); note('بازخوانی شد.'); },
+  reload: async () => { dirty = false; await loadAll(); orders = null; cd = null; sd = null; hp = null; editing = null; errors = []; paint(); note('بازخوانی شد.'); },
   logout: () => { creds = null; user = ''; sessionStorage.removeItem(SESSION_KEY); previews.forEach((u) => URL.revokeObjectURL(u)); previews.clear(); loginView(); },
   new: () => { editing = { p: newProduct(), isNew: true, orig: [] }; errors = []; paint(); },
   edit: (el) => { const p = db.products!.content.find((x) => x.id === el.dataset.id); if (p) { editing = { p: structuredClone(p), isNew: false, orig: [...p.images] }; errors = []; paint(); } },
@@ -619,6 +878,26 @@ const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
   mainimg: (el) => { syncProduct(); const i = Number(el.dataset.id); const p = editing!.p; p.images.unshift(...p.images.splice(i, 1)); const a = p.imageAlts ?? []; a.unshift(...a.splice(i, 1)); dirty = true; paint(); },
   upimg: (el) => { moveImg(Number(el.dataset.id), -1); },
   downimg: (el) => { moveImg(Number(el.dataset.id), 1); },
+  copyrepo: async (el) => { note((await copyText(el.dataset.id ?? '')) ? 'نام مخزن کپی شد.' : 'کپی انجام نشد.'); },
+  preset: (el) => { syncSettings(); const d = structuredClone(cur()); applyPreset(d, el.dataset.id ?? ''); sd = finalize(d); dirty = true; paint(); },
+  pickslot: async (el) => {
+    const k = el.dataset.id as (typeof IMAGE_SLOTS)[number];
+    syncSettings();
+    const path = await pickImage('banners');
+    if (!path) return;
+    const d = structuredClone(cur());
+    d.images = { ...(d.images ?? {}), [k]: { show: true, image: path } };
+    sd = d; dirty = true; paint();
+  },
+  clearslot: (el) => { syncSettings(); const k = el.dataset.id as (typeof IMAGE_SLOTS)[number]; const d = structuredClone(cur()); d.images = { ...(d.images ?? {}), [k]: { show: d.images?.[k]?.show ?? false, image: '' } }; sd = d; dirty = true; paint(); },
+  secup: (el) => moveSection(Number(el.dataset.id), -1),
+  secdown: (el) => moveSection(Number(el.dataset.id), 1),
+  addbenefit: () => editHome((h) => { h.benefits = [...(h.benefits ?? []), { icon: '✨', title: '', text: '' }]; }),
+  rmbenefit: (el) => editHome((h) => { h.benefits = (h.benefits ?? []).filter((_, i) => i !== Number(el.dataset.id)); }),
+  benefitpreset: () => editHome((h) => { h.benefits = [...(h.benefits ?? []), { icon: '🕯', title: 'دست‌ساز', text: 'محصولات با دقت و به‌صورت دست‌ساز تهیه می‌شود' }, { icon: '🎁', title: 'مناسب هدیه', text: 'امکان بسته‌بندی هدیه' }, { icon: '💬', title: 'پاسخگویی در تلگرام', text: 'سؤال‌هایتان را مستقیم بپرسید' }].slice(0, 8); }),
+  addstep: () => editHome((h) => { h.steps = [...(h.steps ?? []), { title: '', text: '' }]; }),
+  rmstep: (el) => editHome((h) => { h.steps = (h.steps ?? []).filter((_, i) => i !== Number(el.dataset.id)); }),
+  resetsteps: () => editHome((h) => { h.steps = DEFAULT_STEPS.map((x) => ({ ...x })); }),
   addcat: () => { syncCats(); (cd ??= structuredClone(db.categories!.content)).push({ id: '', name: '' }); paint(); },
   delcat: async (el) => {
     syncCats();
@@ -733,6 +1012,16 @@ root.addEventListener('submit', (e) => {
       const gone = editing.orig.filter((i) => !p.images.includes(i) && !i.endsWith('.svg'));
       await Promise.all(gone.map((i) => removeImage(i)));
       dirty = false; editing = null; paint(); note('ذخیره شد. انتشار سایت چند دقیقه طول می‌کشد.');
+    } else if (kind === 'quick') {
+      const q = ensureDefaults(structuredClone(db.settings!.content));
+      applyPaths(f, q as unknown as Rec);
+      q.telegramUsername = q.telegramUsername.replace(/^@/, '');
+      const pr = f.querySelector<HTMLInputElement>('input[name=preset]:checked');
+      if (pr) applyPreset(q, pr.value);
+      finalize(q);
+      errors = validateSettings(q);
+      if (errors.length) return paint();
+      await save('settings', q); sd = null; dirty = false; paint(); note('تنظیمات اولیه ذخیره شد.');
     } else if (kind === 'cats') {
       syncCats();
       const named = (cd ?? []).filter((c) => c.name || c.id || c.description || c.image);
@@ -753,25 +1042,20 @@ root.addEventListener('submit', (e) => {
       if (errors.length) { hp = h; return paint(); }
       await save('homepage', h); hp = null; paint(); dirty = false; note('صفحه اصلی ذخیره شد.');
     } else if (kind === 'settings') {
-      const cur = db.settings!.content;
-      let groups: Settings['customOrder']['groups'];
-      try { groups = JSON.parse(val(f, 'groups')) as typeof groups; } catch { errors = ['JSON گزینه‌های سفارش سفارشی معتبر نیست.']; return paint(); }
-      const s: Settings = {
-        ...cur, telegramUsername: val(f, 'tg').trim().replace(/^@/, ''), brandName: val(f, 'brandName').trim(), brandDescription: val(f, 'brandDescription').trim(),
-        currency: val(f, 'currency').trim(), shippingInfo: val(f, 'shippingInfo').trim(),
-        contact: { email: val(f, 'email').trim(), phone: val(f, 'phone').trim(), address: val(f, 'address').trim() },
-        social: { instagram: val(f, 'instagram').trim(), telegramChannel: val(f, 'telegramChannel').trim(), pinterest: val(f, 'pinterest').trim() },
-        banner: { enabled: chk(f, 'bnOn'), text: val(f, 'bnText').trim(), link: val(f, 'bnLink').trim(), bg: val(f, 'bnBg') || '#A9D6E5', color: val(f, 'bnFg') || '#263746' },
-        wallpaper: { enabled: chk(f, 'wpOn'), image: val(f, 'wpImage').trim(), color: val(f, 'wpColor').trim(), overlay: Number(val(f, 'wpOverlay') || 0.7) },
-        orders: { enabled: chk(f, 'ordOn'), requireAddress: chk(f, 'ordAddr'), messageTemplate: val(f, 'ordTpl').trim() || DEFAULT_TEMPLATE },
-        customOrder: { enabled: chk(f, 'coOn'), basePrice: num(val(f, 'coBase')) ?? 0, groups, giftPackaging: { label: val(f, 'giftLabel').trim(), extra: num(val(f, 'giftExtra')) ?? 0 } },
-      };
+      let s: Settings;
+      try { s = buildSettings(f, sd ?? db.settings!.content); } catch (x) { errors = [x instanceof Error ? x.message : 'خطا در خواندن فرم.']; return paint(); }
       errors = validateSettings(s);
       if (errors.length) return paint();
-      await save('settings', s); paint(); dirty = false; note('تنظیمات ذخیره شد.');
+      await save('settings', s); sd = null; paint(); dirty = false; note('تنظیمات ذخیره شد.');
     }
   })().catch((x) => { fail(x); paint(); });
 });
+
+root.addEventListener('toggle', (e) => {
+  const d = e.target as HTMLDetailsElement;
+  const id = d.dataset?.acc;
+  if (id) { if (d.open) accOpen.add(id); else accOpen.delete(id); }
+}, true);
 
 root.addEventListener('input', (e) => {
   const f = (e.target as HTMLElement).closest<HTMLFormElement>('form');
@@ -791,6 +1075,8 @@ root.addEventListener('input', (e) => {
     mount($('#otable')!, orderRows());
   } else if (kind === 'settings') {
     dirty = true;
+    updateThemePreview();
+    f.querySelectorAll('input[type=range][data-path]').forEach((r) => { const o = r.closest('label')?.querySelector('output'); if (o) o.textContent = (r as HTMLInputElement).value; });
     const pv = $('#tplprev');
     if (pv) pv.textContent = tplPreview(val(f, 'ordTpl'));
   } else if (kind) dirty = true;

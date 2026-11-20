@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Prepare public data
+        run: npm run prepare:public
       - name: TypeScript
         run: npm run typecheck
       - name: TypeScript (orders worker, non-blocking until first verified)
@@ -31,6 +33,8 @@ jobs:
         env:
           BASE_PATH: /candle-store/
           SITE_URL: https://example.github.io/candle-store
+      - name: Leak check
+        run: npm run check:leaks
       - name: Dependency audit
         run: npm audit --audit-level=high
       - name: Code quality - no secrets or unsafe patterns in source

@@ -4,6 +4,8 @@ import { cart } from './cart/store';
 import { markActive, renderLayout, setCount } from './components/layout';
 import { toast } from './components/ui';
 import { loadCatalog, type Catalog } from './services/data';
+import { validateSettings } from './shared/validate';
+import type { Settings } from './shared/types';
 import { html, mount, $ } from './utils/dom';
 import { reveal, watchHeader } from './utils/motion';
 import { asset, money, unitPrice } from './utils/format';
@@ -86,6 +88,20 @@ async function start() {
     if (parse().segs[0] === 'cart') render(false);
   });
   window.addEventListener('hashchange', () => render());
+  // Admin live preview: same-origin only, validated, appearance applied in memory (never saved from here).
+  if (new URLSearchParams(location.search).has('preview')) {
+    document.head.insertAdjacentHTML('beforeend', '<meta name="robots" content="noindex" />');
+    window.addEventListener('message', (e) => {
+      if (e.origin !== location.origin) return;
+      const d = e.data as { type?: string; settings?: Settings } | null;
+      if (d?.type !== 'candle-preview' || !d.settings || validateSettings(d.settings).length) return;
+      ctx = { ...ctx, settings: d.settings };
+      renderLayout(d.settings);
+      setCount(cart.count());
+      render(false);
+    });
+    window.parent.postMessage({ type: 'candle-preview-ready' }, location.origin);
+  }
   render(false);
 }
 void start();

@@ -1,4 +1,4 @@
-import { breadcrumbs, sendViaTelegram, toast } from '../components/ui';
+import { breadcrumbs, cover, sendViaTelegram, toast } from '../components/ui';
 import { copyText } from '../services/telegram';
 import { GROUP_KEYS, type GroupKey } from '../shared/types';
 import { html, $, $$ } from '../utils/dom';
@@ -15,7 +15,7 @@ export const custom: PageFn = ({ settings: s }) => {
   return {
     title: `شمع سفارشی | ${s.brandName}`,
     desc: 'شمع دلخواه خود را انتخاب کنید: اندازه، شکل، رنگ، رایحه و نوشته؛ سپس خلاصه را در تلگرام بفرستید.',
-    view: html`${breadcrumbs([['خانه', '#/'], ['شمع سفارشی']])}
+    view: html`${breadcrumbs([['خانه', '#/'], ['شمع سفارشی']])}${cover(s, 'custom')}
     <section class="wrap"><h1>شمع سفارشی</h1><p class="muted">گزینه‌ها را انتخاب کنید و خلاصه را در تلگرام بفرستید. هیچ اطلاعاتی در این سایت ذخیره یا ارسال نمی‌شود.</p>
     <div class="cart-layout"><form id="cf" class="panel"><div class="form-grid">
       ${GROUP_KEYS.map((k) => html`<label>${LABELS[k]}<select name="${k}">${c.groups[k].map((o, i) => html`<option value="${i}">${o.label}</option>`)}</select></label>`)}

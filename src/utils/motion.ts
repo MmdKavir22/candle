@@ -3,6 +3,7 @@ let io: IntersectionObserver | null = null;
 const SEL = '.card, .cat, .panel, .banner, .sec-head, details, .cart-row, .gallery, .pdp > div, .hero-art';
 
 export function reveal(root: ParentNode = document) {
+  if (document.body.classList.contains('motion-off')) return;
   if (!('IntersectionObserver' in window) || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   io ??= new IntersectionObserver((entries) => entries.forEach((e) => {
     if (e.isIntersecting) { e.target.classList.add('in'); io?.unobserve(e.target); }

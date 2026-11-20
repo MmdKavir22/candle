@@ -1,4 +1,4 @@
-import { breadcrumbs, productCard } from '../components/ui';
+import { breadcrumbs, cover, productCard } from '../components/ui';
 import { filterProducts, type Filters } from '../utils/catalog';
 import { html, $, mount } from '../utils/dom';
 import { faNum } from '../utils/format';
@@ -17,8 +17,9 @@ export const shop: PageFn = ({ products, categories, settings: s }, route) => {
   return {
     title: `${catName ?? 'فروشگاه'} | ${s.brandName}`,
     desc: `فهرست شمع‌های دست‌ساز ${s.brandName}؛ جستجو، فیلتر و مرتب‌سازی بر اساس قیمت و دسته‌بندی.`,
-    view: html`${breadcrumbs([['خانه', '#/'], [catName ?? 'فروشگاه']])}
+    view: html`${breadcrumbs([['خانه', '#/'], [catName ?? 'فروشگاه']])}${cover(s, 'shop')}
     <section class="wrap"><h1>${catName ?? 'فروشگاه'}</h1>
+      <div class="chips" role="list" aria-label="دسته‌بندی‌ها"><a class="chip" role="listitem" href="#/shop" aria-current="${!f.cat}">همه</a>${categories.map((c) => html`<a class="chip" role="listitem" href="#/shop?cat=${c.id}" aria-current="${c.id === f.cat}">${c.name}</a>`)}</div>
       <form class="filters" role="search" id="filters">
         <label>جستجو<input type="search" name="q" value="${f.q}" placeholder="نام یا رایحه…" /></label>
         <label>دسته‌بندی<select name="cat"><option value="">همه</option>${categories.map((c) => html`<option value="${c.id}" ${c.id === f.cat ? html`selected` : ''}>${c.name}</option>`)}</select></label>

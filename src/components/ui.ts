@@ -3,6 +3,9 @@ import { copyText, telegramUrl } from '../services/telegram';
 import { html, safeLink, type Safe } from '../utils/dom';
 import { asset } from '../utils/format';
 import type { Product } from '../shared/types';
+import { isImageRef } from '../shared/validate';
+import { slotOf, slotVars } from '../shared/theme';
+import type { ImageSlot } from '../shared/types';
 import { discountPct, faNum, money, onSale, unitPrice } from '../utils/format';
 
 let timer = 0;
@@ -71,3 +74,9 @@ export function contactBlock(s: Settings): Safe {
   </div>`;
 }
 export { safeLink };
+
+/** Optional cover strip for a page; shown only when the owner enabled that image slot and picked an image. */
+export function cover(s: Settings, k: ImageSlot): Safe {
+  const o = slotOf(s, k);
+  return o.show && o.image && isImageRef(o.image) ? html`<div class="wrap"><div class="cover" style="${slotVars(o)}"><img class="slot-img" src="${asset(o.image)}" alt="" loading="lazy" width="1200" height="320" /></div></div>` : html``;
+}

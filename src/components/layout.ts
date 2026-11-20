@@ -1,6 +1,8 @@
 import type { Settings } from '../shared/types';
 import { telegramUrl } from '../services/telegram';
 import { isImageRef } from '../shared/validate';
+import { resolveMarketing, slotOf, slotVars } from '../shared/theme';
+import { applyTheme } from './theme';
 import { html, mount, safeLink, $, $$ } from '../utils/dom';
 import { asset, faNum } from '../utils/format';
 
@@ -8,6 +10,21 @@ const NAV: [string, string, string][] = [
   ['خانه', '#/', ''], ['فروشگاه', '#/shop', 'shop'], ['دسته‌بندی‌ها', '#/categories', 'categories'],
   ['شمع سفارشی', '#/custom', 'custom'], ['درباره ما', '#/about', 'about'], ['تماس', '#/contact', 'contact'],
 ];
+
+function logoSrc(s: Settings): string {
+  const l = slotOf(s, 'logo');
+  return l.show && l.image && isImageRef(l.image) ? asset(l.image) : asset('favicon.svg');
+}
+
+function applyStickyCta(s: Settings) {
+  document.getElementById('sticky-cta')?.remove();
+  const tg = telegramUrl(s.telegramUsername);
+  if (!tg || !resolveMarketing(s).stickyCta) return;
+  const a = document.createElement('a');
+  a.id = 'sticky-cta'; a.className = 'sticky-cta'; a.href = tg; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  a.textContent = '💬 پرسش و سفارش در تلگرام';
+  document.body.append(a);
+}
 
 function applyBanner(s: Settings) {
   const b = s.banner;
@@ -22,26 +39,16 @@ function applyBanner(s: Settings) {
   el.querySelector('button')?.addEventListener('click', () => { el.remove(); try { sessionStorage.setItem(key, '1'); } catch { /* ignore */ } });
   $('#site-header')?.before(el);
 }
-function applyWallpaper(s: Settings) {
-  const w = s.wallpaper, b = document.body;
-  if (!w?.enabled) return;
-  if (w.color) b.style.backgroundColor = w.color;
-  if (w.image && isImageRef(w.image)) {
-    const o = Math.min(0.95, Math.max(0, w.overlay));
-    b.style.backgroundImage = `linear-gradient(rgba(247,251,253,${o}),rgba(247,251,253,${o})),url("${encodeURI(asset(w.image))}")`;
-    b.classList.add('has-wallpaper');
-  }
-}
-
 export function renderLayout(s: Settings) {
-  applyWallpaper(s);
+  applyTheme(s);
   mount($('#site-header')!, html`<div class="wrap bar">
-    <a class="logo" href="#/"><img src="${asset('favicon.svg')}" alt="" width="34" height="34" />${s.brandName}</a>
+    <a class="logo" href="#/"><img class="slot-img" style="${slotVars(slotOf(s, 'logo'))}" src="${logoSrc(s)}" alt="" width="34" height="34" />${s.brandName}</a>
     <button class="menu-btn" type="button" aria-expanded="false" aria-controls="nav" aria-label="منو">☰</button>
     <nav class="nav" id="nav" aria-label="منوی اصلی" data-open="false">${NAV.map(([t, h, k]) => html`<a href="${h}" data-route="${k}">${t}</a>`)}</nav>
     <a class="cart-link" href="#/cart" aria-label="سبد خرید">سبد خرید <span class="count" id="cart-count">۰</span></a>
   </div>`);
   applyBanner(s);
+  applyStickyCta(s);
   const tg = telegramUrl(s.telegramUsername);
   const social = Object.entries(s.social).filter(([, v]) => v);
   const names: Record<string, string> = { instagram: 'اینستاگرام', telegramChannel: 'کانال تلگرام', pinterest: 'پینترست' };

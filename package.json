@@ -10,7 +10,9 @@
     "test": "vitest run",
     "build": "tsc --noEmit && vite build && node scripts/postbuild.mjs",
     "preview": "vite preview",
-    "typecheck:worker": "tsc --noEmit -p serverless/orders-api/tsconfig.json"
+    "typecheck:worker": "tsc --noEmit -p serverless/orders-api/tsconfig.json",
+    "prepare:public": "tsx scripts/prepare-public.ts",
+    "check:leaks": "tsx scripts/check-leaks.ts"
   },
   "dependencies": {
     "@fontsource-variable/vazirmatn": "^5.0.0"

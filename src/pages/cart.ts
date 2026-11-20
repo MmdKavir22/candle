@@ -1,7 +1,8 @@
 import { resolve } from '../cart/logic';
 import { cart } from '../cart/store';
 import { orderText } from '../services/telegram';
-import { breadcrumbs, productUrl, sendViaTelegram, toast } from '../components/ui';
+import { breadcrumbs, productCard, productUrl, sendViaTelegram, toast } from '../components/ui';
+import { resolveMarketing } from '../shared/theme';
 import { copyText } from '../services/telegram';
 import { html, $ } from '../utils/dom';
 import { asset, faNum, money } from '../utils/format';
@@ -16,6 +17,9 @@ export const cartPage: PageFn = ({ products, settings: s }) => {
   const { items, subtotal, count } = resolve(cart.lines, products);
   const text = () => orderText(items, subtotal, s.currency, productUrl);
   const saved = ordersEnabled(s);
+  const mk = resolveMarketing(s), fs = mk.freeShipping;
+  const inCart = new Set(items.map((i) => i.product.id));
+  const cross = mk.crossSell && items.length ? products.filter((p) => p.available && !inCart.has(p.id) && (p.bestSeller || p.featured)).slice(0, 4) : [];
   if (done) {
     const d = done;
     return {
@@ -47,6 +51,7 @@ export const cartPage: PageFn = ({ products, settings: s }) => {
         <aside class="panel sum" aria-label="خلاصه سفارش">
           <div class="row"><span>تعداد کل</span><strong>${faNum(count)}</strong></div>
           <div class="row"><span>جمع جزء</span><strong>${money(subtotal, s.currency)}</strong></div>
+          ${fs.enabled && fs.threshold > 0 ? html`<div class="freeship"><p>${subtotal >= fs.threshold ? 'ارسال این سفارش رایگان است 🎉' : `${money(fs.threshold - subtotal, s.currency)} تا ارسال رایگان`}</p><div class="meter"><i style="--w:${Math.min(100, Math.round((subtotal / fs.threshold) * 100))}%"></i></div></div>` : ''}
           <p class="notice">پرداخت آنلاین وجود ندارد. با دکمه زیر، خلاصه سفارش کپی و گفتگوی تلگرام باز می‌شود؛ پیام را خودتان ارسال کنید.${s.shippingInfo ? ` ${s.shippingInfo}` : ''}</p>
           ${saved ? html`<button class="btn primary" type="button" id="checkout" aria-expanded="false" aria-controls="co">ثبت و ذخیره سفارش</button>
           <form id="co" class="co" hidden novalidate>
@@ -64,6 +69,7 @@ export const cartPage: PageFn = ({ products, settings: s }) => {
           <a class="btn ghost" href="#/shop">ادامه خرید</a>
           <button class="btn danger" type="button" id="clear">خالی کردن سبد</button>
         </aside></div>`}
+    ${cross.length ? html`<h2>پیشنهاد برای شما</h2><div class="grid">${cross.map((p) => productCard(p, s.currency))}</div>` : ''}
     </section>`,
     mount(root, signal) {
       root.addEventListener('click', (e) => {

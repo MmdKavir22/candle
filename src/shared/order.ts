@@ -67,7 +67,7 @@ export function buildOrder(input: unknown, products: Product[], o: { id: string;
   const items: OrderItem[] = [];
   for (const [id, q] of qty) {
     const p = byId.get(id);
-    if (!p) { errors.push(`محصول «${id}» پیدا نشد.`); continue; }
+    if (!p || p.published === false) { errors.push(`محصول «${id}» پیدا نشد.`); continue; }
     if (!p.available) { errors.push(`«${p.name}» در حال حاضر ناموجود است.`); continue; }
     const unit = p.discountPrice !== null && p.discountPrice < p.price ? p.discountPrice : p.price;
     items.push({ id, name: p.name, qty: q, unit, total: unit * q });

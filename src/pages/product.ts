@@ -1,7 +1,9 @@
 import { cart } from '../cart/store';
-import { breadcrumbs, priceBlock, productCard, toast } from '../components/ui';
+import { breadcrumbs, priceBlock, productCard, productUrl, sendViaTelegram, toast } from '../components/ui';
+import { resolveMarketing } from '../shared/theme';
+import { pushRecent } from '../utils/recent';
 import { html, $, $$ } from '../utils/dom';
-import { asset, faNum } from '../utils/format';
+import { asset, faNum, money, unitPrice } from '../utils/format';
 import { clampQty } from '../cart/logic';
 import type { PageFn } from './types';
 
@@ -10,6 +12,7 @@ export const product: PageFn = ({ products, categories, settings: s }, route) =>
   if (!p) return { title: `محصول پیدا نشد | ${s.brandName}`, view: html`<section class="wrap empty"><h1>محصول پیدا نشد</h1><a class="btn primary" href="#/shop">بازگشت به فروشگاه</a></section>` };
   const cat = categories.find((c) => c.id === p.category);
   const rows: [string, string][] = ([['رایحه', p.fragrance], ['اندازه', p.size], ['نوع موم', p.waxType], ['مدت سوختن', p.burningDuration], ...Object.entries(p.specs ?? {})] as [string, string][]).filter(([, v]) => v);
+  const mk = resolveMarketing(s);
   const related = products.filter((x) => x.category === p.category && x.id !== p.id).slice(0, 4);
   return {
     title: `${p.name} | ${s.brandName}`,
@@ -24,9 +27,15 @@ export const product: PageFn = ({ products, categories, settings: s }, route) =>
         <table class="specs"><caption class="visually-hidden">مشخصات</caption><tbody>${rows.map(([k, v]) => html`<tr><th scope="row">${k}</th><td>${v}</td></tr>`)}</tbody></table>
         ${p.available ? html`<div class="buy"><div class="qty"><button type="button" data-d="-1" aria-label="کم کردن">−</button><input id="qty" type="number" min="1" max="99" value="1" inputmode="numeric" aria-label="تعداد" /><button type="button" data-d="1" aria-label="زیاد کردن">+</button></div>
           <button class="btn primary" type="button" id="add">افزودن به سبد</button></div>` : html`<a class="btn ghost" href="#/custom">درخواست شمع سفارشی</a>`}
+        ${mk.productNote ? html`<p class="notice">${mk.productNote}</p>` : ''}
+        ${mk.askOnProduct ? html`<p><button class="btn ghost" type="button" id="ask">پرسش درباره این محصول در تلگرام</button></p>` : ''}
       </div></div>
+    ${p.available ? html`<div class="buybar"><div><strong>${p.name}</strong><span>${money(unitPrice(p), s.currency)}</span></div><button class="btn primary" type="button" id="add2">افزودن به سبد</button></div>` : ''}
     ${related.length ? html`<section class="wrap"><h2>محصولات مرتبط</h2><div class="grid">${related.map((r) => productCard(r, s.currency))}</div></section>` : ''}`,
     mount(root, signal) {
+      pushRecent(p.id);
+      $('#add2', root)?.addEventListener('click', () => { cart.add(p.id, 1); toast('به سبد خرید اضافه شد.'); }, { signal });
+      $('#ask', root)?.addEventListener('click', () => void sendViaTelegram(`سلام، درباره «${p.name}» سؤال دارم:\n${productUrl(p.id)}`, s), { signal });
       const img = $<HTMLImageElement>('#main-img', root);
       $$('.thumbs button', root).forEach((b) => b.addEventListener('click', () => {
         if (img) { img.src = b.dataset.src ?? img.src; img.alt = b.dataset.alt ?? ''; }

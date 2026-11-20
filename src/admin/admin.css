@@ -154,3 +154,33 @@ body.busy .btn[type=submit], body.busy [data-act=toggle] { pointer-events: none;
 .notice { background: var(--secondary); border-radius: 12px; padding: .7rem 1rem; }
 .wpprev { max-width: 260px; border-radius: 14px; margin-block: .6rem; }
 .pill.st-new { background: #e4f1ff; color: #1f5d9e; } .pill.st-confirmed, .pill.st-preparing { background: #fff2d6; color: #8a5a00; } .pill.st-shipped { background: #e9e4fb; color: #5a3fa0; } .pill.st-done { background: #dff3ea; color: var(--ok); } .pill.st-cancelled { background: #fbe4e7; color: var(--danger); }
+
+/* ---------- more-settings accordions, theme editor, image slots ---------- */
+.acc { border: 1px solid var(--border); border-radius: 14px; padding: .2rem 1rem .8rem; margin-bottom: .8rem; background: var(--surface); }
+.acc > summary { cursor: pointer; font-weight: 700; padding: .8rem 0; font-size: 1.02rem; }
+.acc[open] > summary { border-bottom: 1px dashed var(--border); margin-bottom: .8rem; }
+.presets { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+.chipbtn { display: inline-flex; align-items: center; gap: .5rem; min-height: 40px; padding: 0 .9rem; border: 1px solid var(--border); border-radius: 99px; background: #fff; font: 600 .85rem var(--font); cursor: pointer; transition: transform .15s, box-shadow .2s; }
+.chipbtn:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.chipbtn input { position: absolute; opacity: 0; width: 1px; min-height: 0; }
+.chipbtn:has(input:checked) { border-color: var(--accent-ink); box-shadow: 0 0 0 2px var(--primary); }
+.sw { display: inline-flex; } .sw i { width: 16px; height: 16px; border-radius: 50%; margin-inline-end: -5px; border: 2px solid #fff; display: block; }
+.warnc { color: #8a5a00; background: #fff2d6; border-radius: 10px; padding: .4rem .8rem; font-size: .85rem; }
+label output { color: var(--muted); font-weight: 500; margin-inline-start: .4rem; }
+input[type=color] { padding: 2px; min-height: 44px; cursor: pointer; }
+.tp { position: relative; overflow: hidden; border-radius: 18px; padding: 1.5rem; margin-top: 1rem; background: var(--bgi, #eaf6fa); min-height: 150px; border: 1px solid var(--border); }
+.tp.blobs::before { content: ''; position: absolute; width: 160px; height: 160px; border-radius: 50%; background: var(--p, #a9d6e5); filter: blur(30px); opacity: .7; top: -30px; inset-inline-start: -20px; }
+.tp-card { position: relative; max-width: 260px; padding: 1rem 1.2rem; border-radius: var(--r, 16px); background: rgba(255, 255, 255, var(--ga, .66)); -webkit-backdrop-filter: blur(var(--gb, 14px)); backdrop-filter: blur(var(--gb, 14px)); border: 1px solid rgba(255, 255, 255, .7); color: var(--t, #263746); box-shadow: 0 10px 30px -14px rgba(38, 55, 70, .3); }
+.tp-card p { margin: 0 0 .6rem; }
+.tp-btn { display: inline-block; padding: .3rem 1.1rem; border-radius: var(--btn, 99px); background: var(--ink, #1f5d73); color: #fff; font-weight: 700; }
+.slot { display: grid; grid-template-columns: 1.4fr auto 96px auto; gap: .8rem; align-items: center; padding: .7rem 0; border-bottom: 1px solid var(--border); }
+.slot small { display: block; } .slotimg img { width: 88px; height: 56px; object-fit: cover; border-radius: 10px; background: var(--secondary); }
+@media (max-width: 760px) { .slot { grid-template-columns: 1fr 1fr; } }
+.secrow, .itemrow { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .35rem 0; }
+.itemrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: end; border-bottom: 1px dashed var(--border); padding-bottom: .7rem; }
+.repo { border: 1px solid var(--border); border-radius: 14px; padding: 1rem; background: #f8fcfe; } .repo ul { padding-inline-start: 1.2rem; margin: .4rem 0; font-size: .9rem; color: var(--muted); }
+.quick { border-color: var(--primary); box-shadow: 0 14px 40px -22px rgba(31, 93, 115, .5); }
+dialog.picker { width: min(760px, 94vw); border: 0; border-radius: 22px; padding: 1.2rem; box-shadow: 0 30px 80px -20px rgba(38, 55, 70, .5); }
+dialog.picker::backdrop { background: rgba(38, 55, 70, .45); }
+.picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: .5rem; margin-block: 1rem; max-height: 46vh; overflow: auto; }
+.pick { padding: 0; border: 2px solid var(--border); border-radius: 12px; overflow: hidden; cursor: pointer; background: none; aspect-ratio: 1; } .pick:hover { border-color: var(--accent-ink); } .pick img { width: 100%; height: 100%; object-fit: cover; }

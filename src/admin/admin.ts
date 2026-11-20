@@ -460,9 +460,11 @@ function applyPreset(s: Settings, id: string) {
   s.theme = { ...t, colors: { ...p.colors }, bg: { ...t.bg, color: p.bg.color, color2: p.bg.color2 } };
 }
 function syncSettings() {
-  const f = $<HTMLFormElement>('form[data-form=settings]');
+  const f = $<HTMLFormElement>('form[data-form=settings], form[data-form=design]');
   if (!f) return;
-  try { sd = buildSettings(f, cur()); } catch { /* keep the previous draft */ }
+  try {
+    if (f.dataset.form === 'design') { const d = ensureDefaults(structuredClone(cur())); applyPaths(f, d as unknown as Rec); sd = finalize(d); } else sd = buildSettings(f, cur());
+  } catch { /* keep the previous draft */ }
 }
 const acc = (id: string) => raw(`data-acc="${id}" ${accOpen.has(id) ? 'open' : ''}`);
 const inp = (path: string, label: string, v: string | number, type = 'text', attrs = '') => html`<label>${label}<input data-path="${path}" type="${type}" value="${v}" ${raw(attrs)} /></label>`;
@@ -557,7 +559,7 @@ function secMarketing(): Safe {
 }
 
 function updateThemePreview() {
-  const f = $<HTMLFormElement>('form[data-form=settings]'), el = $('#themeprev');
+  const f = $<HTMLFormElement>('form[data-form=settings], form[data-form=design]'), el = $('#themeprev');
   if (!f || !el) return;
   const tmp = structuredClone(cur());
   applyPaths(f, tmp as unknown as Rec);
@@ -631,7 +633,7 @@ function buildSettings(f: HTMLFormElement, cur: Settings): Settings {
 function settingsView(): Safe {
   const s = cur();
   const o = s.customOrder;
-  return html`<form class="panel" data-form="settings"><h1>تنظیمات بیشتر</h1><p class="muted">تنظیمات اولیه در صفحه «نمای کلی» است؛ اینجا جزئیات است.</p>${secRepos()}${secTheme()}${secBg()}${secImages()}${secHome()}${secMarketing()}
+  return html`<form class="panel" data-form="settings"><h1>تنظیمات پیشرفته</h1><p class="muted">تنظیمات اولیه در «نمای کلی»، ظاهر در «ظاهر سایت» و عکس‌ها در «تصاویر» است؛ اینجا جزئیات فنی و تکمیلی است.</p>${secRepos()}${secHome()}${secMarketing()}
     <details class="acc" ${acc('shop')}><summary>🏪 اطلاعات فروشگاه، تماس و شبکه‌ها</summary><div class="grid2">
     <label>نام کاربری تلگرام (بدون @)<input name="tg" value="${s.telegramUsername}" dir="ltr" required /><small><a href="https://t.me/${s.telegramUsername}" target="_blank" rel="noopener noreferrer">تست لینک تلگرام ↗</a></small></label>${field('نام برند', 'brandName', s.brandName, 'required')}${field('واحد پول', 'currency', s.currency, 'required')}
     ${field('ایمیل', 'email', s.contact.email)}${field('تلفن', 'phone', s.contact.phone)}${field('نشانی', 'address', s.contact.address)}
@@ -656,6 +658,36 @@ function settingsView(): Safe {
     <label>گزینه‌ها (JSON: هر گروه آرایه‌ای از {label, extra})<textarea class="code" name="groups">${JSON.stringify(o.groups, null, 2)}</textarea></label>
     </details><p class="sticky"><button class="btn primary" type="submit">ذخیره تنظیمات (Ctrl+S)</button></p></form>`;
 }
+
+/* ---------- appearance / images tabs (design form: data-path fields only, saved as a whole) ---------- */
+const designBar = (): Safe => html`<div class="row-actions sticky"><button class="btn primary" type="submit">ذخیره تغییرات</button><button class="btn ghost" type="button" data-act="cancelchanges">لغو تغییرات</button><button class="btn danger" type="button" data-act="resetdesign">بازگشت به پیش‌فرض</button></div>`;
+
+function appearanceView(): Safe {
+  return html`<form class="panel" data-form="design"><h1>ظاهر سایت</h1>
+    <p class="muted">رنگ، افکت شیشه‌ای و پس‌زمینه را اینجا تنظیم کنید. پیش‌نمایش نمونه همین‌جاست؛ تا «ذخیره» نزنید روی سایت اثری ندارد.</p>
+    ${secTheme()}${secBg()}${designBar()}</form>`;
+}
+
+function usageOf(path: string): string[] {
+  const out: string[] = [];
+  const has = (v: unknown) => JSON.stringify(v ?? null).includes(JSON.stringify(path));
+  db.products!.content.forEach((p) => { if (p.images.includes(path)) out.push(`محصول: ${p.name}`); });
+  db.categories!.content.forEach((c) => { if (c.image === path) out.push(`دسته: ${c.name}`); });
+  if (has(db.homepage?.content)) out.push('صفحه اصلی');
+  if (has(db.settings?.content) || has(sd)) out.push('تنظیمات ظاهر');
+  return out;
+}
+function libraryPanel(): Safe {
+  if (libCache === null) return html`<div class="panel"><h2>کتابخانه تصاویر</h2><p class="muted">همه تصاویر آپلودشده در مخزن خصوصی؛ هر تصویر نشان می‌دهد کجا استفاده شده است.</p><button class="btn ghost" type="button" data-act="loadlib">نمایش کتابخانه</button></div>`;
+  return html`<div class="panel"><h2>کتابخانه تصاویر (${faNum(libCache.length)})</h2><p class="muted">تصویری که در جایی استفاده شده حذف نمی‌شود؛ ابتدا آن را از همان بخش بردارید.</p>
+    <div class="libgrid">${libCache.map((path) => { const u = usageOf(path); return html`<div class="libitem"><img data-p="${path}" alt="" loading="lazy" /><small dir="ltr">${path.split('/').pop() ?? path}</small>${u.length ? html`<small class="muted">${u.join('، ')}</small>` : html`<button class="btn danger sm" type="button" data-act="libdel" data-id="${path}">حذف (بدون استفاده)</button>`}</div>`; })}</div></div>`;
+}
+function imagesView(): Safe {
+  return html`<form class="panel" data-form="design"><h1>تصاویر سایت</h1>
+    <p class="muted">برای هر بخش مشخص کنید عکس نمایش داده شود یا نه و عکسش را انتخاب، جایگزین یا حذف کنید. تصاویر محصولات را در تب «محصولات» و تصویر هر بنر را در «صفحه اصلی» تنظیم می‌کنید.</p>
+    ${secImages()}${designBar()}</form>${libraryPanel()}`;
+}
+const advancedView = (): Safe => settingsView();
 
 function paint() {
   if (!user) return;
@@ -841,7 +873,10 @@ function moveSection(i: number, delta: number) {
 const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
   tab: async (el) => {
     if (!leave()) return;
-    tab = el.dataset.id as Tab; editing = null; hp = null; cd = null; sd = null; errors = []; paint();
+    tab = el.dataset.id as Tab;
+    if (tab === 'images') accOpen.add('images');
+    if (tab === 'appearance') { accOpen.add('theme'); accOpen.add('bg'); }
+    editing = null; hp = null; cd = null; sd = null; errors = []; paint();
     if (tab === 'orders' && orders === null) { await loadOrders(); paint(); }
   },
   reload: async () => { dirty = false; await loadAll(); orders = null; cd = null; sd = null; hp = null; editing = null; errors = []; paint(); note('بازخوانی شد.'); },
@@ -878,6 +913,21 @@ const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
   mainimg: (el) => { syncProduct(); const i = Number(el.dataset.id); const p = editing!.p; p.images.unshift(...p.images.splice(i, 1)); const a = p.imageAlts ?? []; a.unshift(...a.splice(i, 1)); dirty = true; paint(); },
   upimg: (el) => { moveImg(Number(el.dataset.id), -1); },
   downimg: (el) => { moveImg(Number(el.dataset.id), 1); },
+  cancelchanges: () => { sd = null; dirty = false; errors = []; paint(); note('تغییرات ذخیره‌نشده لغو شد.'); },
+  resetdesign: () => {
+    if (!confirm('ظاهر (رنگ‌ها، شیشه‌ای، پس‌زمینه و جای تصاویر) به حالت پیش‌فرض برگردد؟ تا «ذخیره» نزنید اعمال نمی‌شود.')) return;
+    const d = structuredClone(cur());
+    delete d.theme; delete d.images; delete d.wallpaper;
+    sd = finalize(ensureDefaults(d)); dirty = true; paint();
+  },
+  loadlib: async () => { await listLibrary(true); paint(); },
+  libdel: async (el) => {
+    const path = el.dataset.id ?? '';
+    const u = usageOf(path);
+    if (u.length) throw new Error(`این تصویر در حال استفاده است: ${u.join('، ')}`);
+    if (!confirm('این تصویر برای همیشه از مخزن خصوصی حذف شود؟')) return;
+    await removeImage(path); await listLibrary(true); paint(); note('تصویر حذف شد.');
+  },
   copyrepo: async (el) => { note((await copyText(el.dataset.id ?? '')) ? 'نام مخزن کپی شد.' : 'کپی انجام نشد.'); },
   preset: (el) => { syncSettings(); const d = structuredClone(cur()); applyPreset(d, el.dataset.id ?? ''); sd = finalize(d); dirty = true; paint(); },
   pickslot: async (el) => {
@@ -1022,6 +1072,13 @@ root.addEventListener('submit', (e) => {
       errors = validateSettings(q);
       if (errors.length) return paint();
       await save('settings', q); sd = null; dirty = false; paint(); note('تنظیمات اولیه ذخیره شد.');
+    } else if (kind === 'design') {
+      const d = ensureDefaults(structuredClone(cur()));
+      applyPaths(f, d as unknown as Rec);
+      finalize(d);
+      errors = validateSettings(d);
+      if (errors.length) { sd = d; return paint(); }
+      await save('settings', d); sd = null; dirty = false; paint(); note('تغییرات ظاهر ذخیره شد.');
     } else if (kind === 'cats') {
       syncCats();
       const named = (cd ?? []).filter((c) => c.name || c.id || c.description || c.image);
@@ -1073,7 +1130,7 @@ root.addEventListener('input', (e) => {
   } else if (kind === 'ofilter') {
     of = { q: val(f, 'q'), status: val(f, 'status') };
     mount($('#otable')!, orderRows());
-  } else if (kind === 'settings') {
+  } else if (kind === 'settings' || kind === 'design') {
     dirty = true;
     updateThemePreview();
     f.querySelectorAll('input[type=range][data-path]').forEach((r) => { const o = r.closest('label')?.querySelector('output'); if (o) o.textContent = (r as HTMLInputElement).value; });
@@ -1083,7 +1140,7 @@ root.addEventListener('input', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-    const f = $<HTMLFormElement>('form[data-form=product], form[data-form=home], form[data-form=settings]');
+    const f = $<HTMLFormElement>('form[data-form=product], form[data-form=home], form[data-form=settings], form[data-form=design], form[data-form=quick]');
     if (f) { e.preventDefault(); f.requestSubmit(); }
   }
 });

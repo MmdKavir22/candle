@@ -184,3 +184,6 @@ dialog.picker { width: min(760px, 94vw); border: 0; border-radius: 22px; padding
 dialog.picker::backdrop { background: rgba(38, 55, 70, .45); }
 .picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: .5rem; margin-block: 1rem; max-height: 46vh; overflow: auto; }
 .pick { padding: 0; border: 2px solid var(--border); border-radius: 12px; overflow: hidden; cursor: pointer; background: none; aspect-ratio: 1; } .pick:hover { border-color: var(--accent-ink); } .pick img { width: 100%; height: 100%; object-fit: cover; }
+.libgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: .8rem; }
+.libitem { display: grid; gap: .3rem; align-content: start; font-size: .8rem; word-break: break-all; }
+.libitem img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: var(--secondary); }

@@ -1,32 +1,30 @@
-# Candle Store — site (public repo)
+# Candle Store — one repo: site + admin panel
 
-Persian (RTL) static candle shop on GitHub Pages. Customers browse, fill a cart and send the order in Telegram.
-The **admin panel lives in a separate repository** (`candle-admin`). It edits this repo directly (products, categories, homepage, settings, images); every save is a commit on `main`, which rebuilds and publishes the site automatically.
+Persian (RTL) static candle shop on GitHub Pages. The public site is at `https://USERNAME.github.io/REPOSITORY/` and the admin panel at `.../REPOSITORY/admin/`. The admin edits **this same repo** (products, categories, homepage, settings, images) through the GitHub API with your token; every save is a commit on `main`, which rebuilds and publishes the site automatically.
 
 ## Where the content lives
-| What | Path in this repo |
+| What | Path |
 |---|---|
 | Products, categories, homepage, settings | `public/data/*.json` |
-| Images (products, categories, banners, wallpaper) | `public/images/…` |
-
-You normally never edit these by hand; use the admin panel.
+| Images | `public/images/…` |
 
 ## Setup
-1. Create a GitHub repo (e.g. `candle`), push this project to `main`.
+1. Create a **public** GitHub repo, push this project to `main`.
 2. **Settings → Pages → Source: GitHub Actions**.
-3. (Optional) **Settings → Secrets and variables → Actions → Variables**: `VITE_TELEGRAM_USERNAME`, `ORDERS_API_URL`.
-4. Push. `deploy.yml` validates, tests, builds and publishes: `https://USERNAME.github.io/REPOSITORY/`.
-5. Set up the admin repo (see its README) and log in with a token that has **Contents: Read and write** on this repo.
+3. (Optional) Actions **Variables**: `VITE_TELEGRAM_USERNAME`, `ORDERS_API_URL`.
+4. Create a fine-grained token (GitHub → Settings → Developer settings): only this repo, **Contents: Read and write** (add **Actions: Read and write** for the manual publish button), with an expiry.
+5. Open `/admin/`, paste the token (the repo link is prefilled).
 
-## Local development
+The token stays in the tab's memory/sessionStorage and goes only to `api.github.com`; it is never committed.
+
+## Notes
+- The repo is public, so all saved data is public. Draft products are hidden from the site but visible in the repo files. Don't store secrets or customer data here.
+- Orders (optional): `serverless/orders-api` is a Cloudflare Worker that stores orders in a **separate private repo**. Enter that repo in the admin login form to see orders.
+
+## Development
 ```bash
 npm install
 npm run dev        # http://localhost:5173
 npm run typecheck && npm test && npm run build
 ```
-
-## Orders (optional)
-`serverless/orders-api` is a small Cloudflare Worker that stores each order as a JSON file in a **separate private repo** (never this one). Set `GITHUB_REPO` / `ALLOWED_ORIGIN` in its `wrangler.toml`, run `npx wrangler deploy`, add the secret `GITHUB_REPO_TOKEN`, then set the repo variable `ORDERS_API_URL`. Enter the same private orders repo on the admin login form to see orders in the admin.
-
-## Security / SEO
 See `docs/SECURITY.md` and `docs/SEO.md`.

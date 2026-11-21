@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Minimum permissions. No secrets are used. The admin panel commits catalog changes (public/data, public/images) to main, which triggers this workflow.
+# Minimum permissions. No secrets are used. The admin panel (/admin/) commits catalog changes (public/data, public/images) to main, which triggers this workflow.
 permissions:
   contents: read
   pages: write
@@ -47,6 +47,7 @@ jobs:
         run: npm run build
         env:
           # Public values (repository Variables, not Secrets)
+          VITE_SITE_REPO: ${{ github.repository }}
           VITE_SITE_REPO: ${{ github.repository }}
           VITE_ORDERS_API_URL: ${{ vars.ORDERS_API_URL }}
           VITE_TELEGRAM_USERNAME: ${{ vars.VITE_TELEGRAM_USERNAME }}

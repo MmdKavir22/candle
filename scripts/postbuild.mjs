@@ -80,5 +80,5 @@ const today = new Date().toISOString().slice(0, 10);
 const urls = [`${SITE}/`, ...products.map((p) => `${SITE}/products/${p.id}/`)];
 writeFileSync('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${u}</loc><lastmod>${today}</lastmod></url>`).join('\n')}\n</urlset>\n`);
 // robots.txt: on project sites the file must live at the domain root to be honoured; kept here for custom domains.
-writeFileSync('dist/robots.txt', `User-agent: *\nSitemap: ${SITE}/sitemap.xml\n`);
+writeFileSync('dist/robots.txt', `User-agent: *\nDisallow: ${BASE}admin/\nSitemap: ${SITE}/sitemap.xml\n`);
 console.log(`Generated ${products.length} product pages, sitemap.xml and robots.txt for ${SITE}`);

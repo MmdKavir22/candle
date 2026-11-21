@@ -396,8 +396,8 @@
   },
   "images": {
     "logo": {
-      "show": false,
-      "image": ""
+      "show": true,
+      "image": "images/banners/image-mwq4lmis.webp"
     },
     "hero": {
       "show": true,
@@ -412,24 +412,24 @@
       "image": ""
     },
     "intro": {
-      "show": false,
-      "image": ""
+      "show": true,
+      "image": "images/banners/image-mwq4lhgu.webp"
     },
     "about": {
-      "show": false,
-      "image": ""
+      "show": true,
+      "image": "images/banners/image-mwq4lz7e.webp"
     },
     "shop": {
-      "show": false,
-      "image": ""
+      "show": true,
+      "image": "images/banners/image-mwq4mcf9.webp"
     },
     "custom": {
-      "show": false,
-      "image": ""
+      "show": true,
+      "image": "images/banners/image-mwq4nywi.webp"
     },
     "contact": {
-      "show": false,
-      "image": ""
+      "show": true,
+      "image": "images/banners/image-mwq4ofk7.webp"
     }
   }
 }

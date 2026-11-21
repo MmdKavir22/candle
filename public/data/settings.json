@@ -394,5 +394,42 @@
     },
     "styles": {}
   },
-  "images": {}
+  "images": {
+    "logo": {
+      "show": false,
+      "image": ""
+    },
+    "hero": {
+      "show": true,
+      "image": "images/banners/image-mwq4ipyv.webp"
+    },
+    "categories": {
+      "show": true,
+      "image": ""
+    },
+    "banners": {
+      "show": true,
+      "image": ""
+    },
+    "intro": {
+      "show": false,
+      "image": ""
+    },
+    "about": {
+      "show": false,
+      "image": ""
+    },
+    "shop": {
+      "show": false,
+      "image": ""
+    },
+    "custom": {
+      "show": false,
+      "image": ""
+    },
+    "contact": {
+      "show": false,
+      "image": ""
+    }
+  }
 }

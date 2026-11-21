@@ -195,7 +195,7 @@ body.no-motion .reveal { opacity: 1; transform: none; }
 
 /* Glass: each target is switched on/off from the admin (body classes glass-cards / glass-panels / nav-glass / glass-footer / glass-buttons). */
 body.glass-cards :is(.card, .cat, .benefit, .step),
-body.glass-panels :is(.panel, details, .co, .qty, dialog, .cover, .sum, .catrow),
+body.glass-panels :is(.panel, details, .co, .qty, dialog, .cover, .sum, .catrow, .cart-row),
 body.glass-footer .alt {
   background: rgba(255, 255, 255, var(--glass-a));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat, 150%)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat, 150%));
@@ -212,10 +212,10 @@ body.nav-underline .nav a:hover, body.nav-underline .nav a[aria-current=page] { 
 body.glass-buttons .btn.ghost { background: rgba(255, 255, 255, .55); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 body.glass-cards .banner { border: 1px solid rgba(255, 255, 255, .6); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  body[class*="glass-"] :is(.card, .cat, .benefit, .step, .panel, details, .co, .qty, dialog, .cover, .sum, .catrow, .alt), body.nav-glass .site-header, body.glass-footer footer { background: var(--surface); }
+  body[class*="glass-"] :is(.card, .cat, .benefit, .step, .panel, details, .co, .qty, dialog, .cover, .sum, .catrow, .cart-row, .alt), body.nav-glass .site-header, body.glass-footer footer { background: var(--surface); }
 }
 @media (prefers-reduced-transparency: reduce) {
-  body[class*="glass-"] :is(.card, .cat, .benefit, .step, .panel, details, .co, .qty, dialog, .cover, .sum, .catrow, .alt), body.nav-glass .site-header, body.glass-footer footer { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  body[class*="glass-"] :is(.card, .cat, .benefit, .step, .panel, details, .co, .qty, dialog, .cover, .sum, .catrow, .cart-row, .alt), body.nav-glass .site-header, body.glass-footer footer { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
 /* ---------- admin-controlled design tokens: typography, buttons, cards, spacing, navigation, motion ---------- */
@@ -285,3 +285,14 @@ body { position: relative; }
 .meter i { display: block; height: 100%; width: var(--w); background: linear-gradient(90deg, var(--accent), var(--primary)); border-radius: 99px; transition: width .6s; }
 .notice { background: var(--secondary); border-radius: var(--r-sm); padding: .7rem 1rem; }
 @counter-style persian { system: numeric; symbols: '۰' '۱' '۲' '۳' '۴' '۵' '۶' '۷' '۸' '۹'; }
+
+/* ---------- polish: cart, checkout and confirmation (honours the motion setting) ---------- */
+.cart-row { animation: pop calc(.4s * var(--anim, 1)) ease both; transition: transform .25s ease, box-shadow .25s ease; }
+.cart-row:hover { transform: translateY(calc(var(--lift, -4px) / 2)); box-shadow: var(--shadow); }
+.co:not([hidden]) { animation: rise calc(.45s * var(--anim, 1)) cubic-bezier(.2, .7, .2, 1) both; }
+.panel.done { animation: pop calc(.5s * var(--anim, 1)) ease both; }
+.btn:active { transform: scale(.97); }
+.qty button { transition: transform .15s ease, background-color .2s ease; }
+.qty button:active { transform: scale(.88); }
+.co input:focus-visible, .co textarea:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); outline: none; transition: box-shadow .2s ease; }
+@media (prefers-reduced-motion: reduce) { .cart-row, .co, .panel.done { animation: none !important; } .cart-row:hover, .btn:active, .qty button:active { transform: none; } }

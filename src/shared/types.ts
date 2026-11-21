@@ -76,7 +76,7 @@ export type FontKey = 'vazir' | 'system' | 'serif';
 export type Pos = 'center' | 'top' | 'bottom' | 'left' | 'right';
 export interface Area {
   mode: 'inherit' | 'solid' | 'gradient' | 'image'; color: string; color2: string; angle: number;
-  image: string; imageMobile: string; opacity: number; blur: number;
+  image: string; imageMobile: string; opacity: number; overlay: number; blur: number;
   size: 'cover' | 'contain' | 'auto'; position: Pos; repeat: boolean; attachment: 'scroll' | 'fixed';
 }
 export interface Theme {

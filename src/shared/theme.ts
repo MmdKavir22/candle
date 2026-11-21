@@ -11,7 +11,7 @@ export const PRESETS: { id: string; label: string; colors: ThemeColors; bg: { co
   { id: 'graphite', label: 'طوسی مدرن', colors: { primary: '#CBD5DB', secondary: '#E7ECEF', bg: '#F8FAFB', accent: '#6F8794', accentInk: '#2F4551', text: '#1E2A31', muted: '#6B7A83', border: '#E3E9EC' }, bg: { color: '#EEF2F4', color2: '#D5DEE3' } },
 ];
 
-export const DEFAULT_AREA: Area = { mode: 'inherit', color: '#EAF6FA', color2: '#CFE9F3', angle: 160, image: '', imageMobile: '', opacity: 1, blur: 0, size: 'cover', position: 'center', repeat: false, attachment: 'scroll' };
+export const DEFAULT_AREA: Area = { mode: 'inherit', color: '#EAF6FA', color2: '#CFE9F3', angle: 160, image: '', imageMobile: '', opacity: 1, overlay: 0, blur: 0, size: 'cover', position: 'center', repeat: false, attachment: 'scroll' };
 export const AREA_LABEL: Record<(typeof AREA_IDS)[number], [string, string]> = {
   page: ['پس‌زمینه کل صفحه', 'پشت همه چیز؛ ثابت می‌ماند و فقط محتوا اسکرول می‌شود'],
   header: ['هدر (منوی بالا)', 'نوار بالای سایت'],

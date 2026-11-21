@@ -187,3 +187,6 @@ dialog.picker::backdrop { background: rgba(38, 55, 70, .45); }
 .libgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: .8rem; }
 .libitem { display: grid; gap: .3rem; align-content: start; font-size: .8rem; word-break: break-all; }
 .libitem img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: var(--secondary); }
+
+.areacard { margin-block: .75rem; }
+.areacard .wpprev { max-width: 220px; margin-top: .5rem; }

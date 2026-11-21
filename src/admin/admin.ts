@@ -1,11 +1,11 @@
 import '@fontsource-variable/vazirmatn';
 import './admin.css';
-import type { Category, DataName, Homepage, Product, Settings } from '../shared/types';
+import type { AreaId, Category, DataName, Homepage, Product, Settings } from '../shared/types';
 import { validateCategories, validateHomepage, validateProduct, validateProducts, validateSettings, validators, isImageRef, IMG_RE } from '../shared/validate';
 import { DEFAULT_TEMPLATE, ORDER_STATUSES, STATUS_LABEL, renderOrderMessage, type Order, type OrderStatus } from '../shared/order';
 import { makeFmt } from '../services/orders';
-import { DEFAULT_STEPS, PRESETS, SECTION_LABEL, SLOT_LABEL, contrast, resolveHome, resolveMarketing, resolveTheme, slotOf } from '../shared/theme';
-import { IMAGE_SLOTS } from '../shared/types';
+import { AREA_LABEL, DEFAULT_STEPS, PRESETS, SECTION_LABEL, SLOT_LABEL, contrast, resolveHome, resolveMarketing, resolveTheme, slotOf } from '../shared/theme';
+import { AREA_IDS, IMAGE_SLOTS } from '../shared/types';
 import { copyText, telegramUrl } from '../services/telegram';
 import { toPublicProducts } from '../shared/public';
 import { html, mount, raw, $, $$, type Safe } from '../utils/dom';
@@ -516,6 +516,22 @@ function secBg(): Safe {
     ${chkp('theme.bg.blobs', 'لکه‌های نور نرم و متحرک (پشت شیشه زیبا می‌شود)', b.blobs)}${rng('theme.bg.imageBlur', 'محو کردن عکس پس‌زمینه', b.imageBlur, 0, 30, 1)}</div>
     <p class="muted">اگر «تصویر زمینه» را فعال کنید، عکس جایگزین گرادیان می‌شود.</p></details>`;
 }
+function secAreas(): Safe {
+  const t = resolveTheme(cur());
+  const opt = (v: string, c: string, label: string) => html`<option value="${v}" ${v === c ? html`selected` : ''}>${label}</option>`;
+  const imgField = (id: AreaId, f: 'image' | 'imageMobile', label: string, v: string) => html`<div><label>${label} (مسیر یا لینک https)<input data-path="theme.areas.${id}.${f}" value="${v}" dir="ltr" /></label>
+    <div class="row-actions"><button class="btn ghost sm" type="button" data-act="pickarea" data-id="${id}.${f}">انتخاب / بارگذاری تصویر</button>${v ? html`<button class="btn danger sm" type="button" data-act="cleararea" data-id="${id}.${f}">حذف</button>` : ''}</div>${v ? html`<img class="wpprev" data-p="${v}" alt="" />` : ''}</div>`;
+  return html`<details class="acc" ${acc('areas')}><summary>🖼 پس‌زمینه بخش‌ها (عکس، شفافیت، لایه رنگی، موقعیت)</summary>
+    <p class="muted">برای صفحه اصلی و بخش‌های دیگر جداگانه رنگ یا عکس بگذارید. «لایه روی عکس» یک لایه هم‌رنگ زمینه روی عکس می‌اندازد تا متن خوانا بماند. «بدون تغییر» یعنی همان پس‌زمینه کلی سایت.</p>
+    ${AREA_IDS.map((id) => { const a = t.areas[id], [label, hint] = AREA_LABEL[id], p = `theme.areas.${id}`; return html`<div class="panel areacard"><h3>${label}</h3><p class="muted">${hint}</p>
+      <div class="grid2"><label>نوع<select data-path="${p}.mode">${opt('inherit', a.mode, 'بدون تغییر')}${opt('solid', a.mode, 'تک‌رنگ')}${opt('gradient', a.mode, 'گرادیان')}${opt('image', a.mode, 'عکس')}</select></label>
+        ${clr(`${p}.color`, 'رنگ (تک‌رنگ/گرادیان)', a.color)}${clr(`${p}.color2`, 'رنگ دوم (گرادیان)', a.color2)}${rng(`${p}.angle`, 'زاویه گرادیان', a.angle, 0, 360, 5)}</div>
+      <div class="grid2">${imgField(id, 'image', 'تصویر پس‌زمینه', a.image)}${imgField(id, 'imageMobile', 'تصویر موبایل (اختیاری)', a.imageMobile)}</div>
+      <div class="grid2">${rng(`${p}.opacity`, 'شفافیت پس‌زمینه', a.opacity, 0, 1, 0.05)}${rng(`${p}.overlay`, 'لایه روشن روی عکس', a.overlay, 0, 0.95, 0.05)}${rng(`${p}.blur`, 'محو کردن عکس', a.blur, 0, 30, 1)}</div>
+      <div class="grid2"><label>اندازه عکس<select data-path="${p}.size">${opt('cover', a.size, 'پر کردن (cover)')}${opt('contain', a.size, 'کامل دیده شود (contain)')}${opt('auto', a.size, 'اندازه اصلی')}</select></label>
+        <label>موقعیت عکس<select data-path="${p}.position">${opt('center', a.position, 'وسط')}${opt('top', a.position, 'بالا')}${opt('bottom', a.position, 'پایین')}${opt('left', a.position, 'چپ')}${opt('right', a.position, 'راست')}</select></label>
+        <label>حالت اسکرول<select data-path="${p}.attachment">${opt('scroll', a.attachment, 'همراه صفحه')}${opt('fixed', a.attachment, 'ثابت (پارالاکس)')}</select></label>${chkp(`${p}.repeat`, 'تکرار عکس (کاشی)', a.repeat)}</div></div>`; })}</details>`;
+}
 const NO_IMG = ['categories', 'banners'];
 function secImages(): Safe {
   const s = cur();
@@ -644,7 +660,8 @@ function settingsView(): Safe {
       ${w.image ? html`<img class="wpprev" id="wpprev" data-p="${w.image}" alt="" />` : html`<img class="wpprev" id="wpprev" alt="" hidden />`}
       </details><details class="acc" ${acc('orders')}><summary>🧾 ثبت سفارش و قالب پیام</summary><div class="grid2"><label class="chk"><input type="checkbox" name="ordOn" ${od.enabled ? html`checked` : ''}/>ثبت و ذخیره سفارش از سایت</label><label class="chk"><input type="checkbox" name="ordAddr" ${od.requireAddress ? html`checked` : ''}/>نشانی الزامی باشد</label></div>
       <label>قالب پیام سفارش<textarea class="code" name="ordTpl" maxlength="2000">${od.messageTemplate}</textarea></label>
-      <p class="muted">متغیرها: <bdi dir="ltr">{{code}} {{name}} {{phone}} {{address}} {{items}} {{total}} {{notes}} {{date}} {{brand}}</bdi></p>
+      <p class="muted">متغیرها: <bdi dir="ltr">{{name}} {{address}} {{postalCode}} {{phone}} {{telegram}} {{items}} {{total}} {{notes}} {{code}} {{date}} {{brand}}</bdi></p>
+      <p class="muted">این قالب در صفحه سبد خرید برای ساخت پیام سفارش مشتری استفاده می‌شود و دکمه «کپی پیام سفارش» همین متن را کپی می‌کند. بعد از تغییر، «ذخیره» را بزنید.</p>
       <div class="summary-box" id="tplprev"></div>`;
     })()}
     </details><details class="acc" ${acc('custom')}><summary>🕯 سفارش سفارشی (شمع دلخواه)</summary><div class="grid2"><label class="chk"><input type="checkbox" name="coOn" ${o.enabled ? html`checked` : ''}/>فعال</label>${field('قیمت پایه', 'coBase', o.basePrice)}${field('برچسب بسته‌بندی هدیه', 'giftLabel', o.giftPackaging.label)}${field('هزینه بسته‌بندی هدیه', 'giftExtra', o.giftPackaging.extra)}</div>
@@ -658,7 +675,7 @@ const designBar = (): Safe => html`<div class="row-actions sticky"><button class
 function appearanceView(): Safe {
   return html`<form class="panel" data-form="design"><h1>ظاهر سایت</h1>
     <p class="muted">رنگ، افکت شیشه‌ای و پس‌زمینه را اینجا تنظیم کنید. پیش‌نمایش نمونه همین‌جاست؛ تا «ذخیره» نزنید روی سایت اثری ندارد.</p>
-    ${secTheme()}${secBg()}${designBar()}</form>`;
+    ${secTheme()}${secBg()}${secAreas()}${designBar()}</form>`;
 }
 
 function usageOf(path: string): string[] {
@@ -806,7 +823,7 @@ async function updateOrder(path: string, patch: Partial<Order>) {
 }
 function ordersCsv() {
   const q = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-  const rows = [['کد', 'تاریخ', 'نام', 'تلفن', 'نشانی', 'اقلام', 'جمع', 'وضعیت'], ...(orders ?? []).map(({ order: o }) => [o.id, o.createdAt, o.customer.name, o.customer.phone, o.customer.address, o.items.map((i) => `${i.name}×${i.qty}`).join(' | '), o.total, STATUS_LABEL[o.status]])];
+  const rows = [['کد', 'تاریخ', 'نام', 'تلفن', 'نشانی', 'کدپستی', 'آیدی تلگرام', 'اقلام', 'جمع', 'وضعیت'], ...(orders ?? []).map(({ order: o }) => [o.id, o.createdAt, o.customer.name, o.customer.phone, o.customer.address, o.customer.postalCode ?? '', o.customer.telegram ?? '', o.items.map((i) => `${i.name}×${i.qty}`).join(' | '), o.total, STATUS_LABEL[o.status]])];
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['\ufeff' + rows.map((r) => r.map(q).join(',')).join('\n')], { type: 'text/csv' }));
   a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
@@ -825,7 +842,7 @@ function orderDetail(rec: OrderRec): Safe {
   const msg = renderOrderMessage(s.orders?.messageTemplate || DEFAULT_TEMPLATE, o, s.brandName, fmt());
   const tg = telegramUrl(s.telegramUsername);
   return html`<div class="panel"><div class="row-actions"><h2>سفارش <span dir="ltr">${o.id}</span></h2><span class="sp"></span><button class="btn ghost sm" type="button" data-act="closeorder">بستن</button></div>
-    <div class="grid2"><div><h3>مشتری</h3><p><strong>${o.customer.name}</strong></p><p><a href="tel:${o.customer.phone}" dir="ltr">${o.customer.phone}</a></p><p>${o.customer.address || '—'}</p><p class="muted">${o.customer.notes || '—'}</p></div>
+    <div class="grid2"><div><h3>مشتری</h3><p><strong>${o.customer.name}</strong></p><p><a href="tel:${o.customer.phone}" dir="ltr">${o.customer.phone}</a></p><p>${o.customer.address || '—'}</p><p dir="ltr">${o.customer.postalCode || '—'}</p><p dir="ltr">${o.customer.telegram || '—'}</p><p class="muted">${o.customer.notes || '—'}</p></div>
       <div><label>وضعیت<select data-order-status="${rec.path}">${ORDER_STATUSES.map((st) => html`<option value="${st}" ${st === o.status ? html`selected` : ''}>${STATUS_LABEL[st]}</option>`)}</select></label><p class="muted">ثبت: ${dateFa(o.createdAt)}${o.updatedAt ? ` · بروزرسانی: ${dateFa(o.updatedAt)}` : ''}</p></div></div>
     <table><thead><tr><th>محصول</th><th>تعداد</th><th>قیمت واحد</th><th>جمع</th></tr></thead><tbody>${o.items.map((i) => html`<tr><td>${i.name}</td><td>${faNum(i.qty)}</td><td>${faNum(i.unit)}</td><td>${faNum(i.total)}</td></tr>`)}</tbody></table>
     <p><strong>جمع کل: ${faNum(o.total)} ${cur}</strong></p>
@@ -845,7 +862,7 @@ function ordersView(): Safe {
     ${open ? orderDetail(open) : ''}<div class="panel" id="otable">${orderRows()}</div>`}`;
 }
 
-const SAMPLE_ORDER: Order = { id: 'ord-demo-0001', createdAt: new Date().toISOString(), status: 'new', currency: '', total: 500000, customer: { name: 'نام نمونه', phone: '09120000000', address: 'تهران، خیابان نمونه', notes: 'لطفاً زنگ بزنید' }, items: [{ id: 'sample', name: 'محصول نمونه', qty: 2, unit: 250000, total: 500000 }] };
+const SAMPLE_ORDER: Order = { id: 'ord-demo-0001', createdAt: new Date().toISOString(), status: 'new', currency: '', total: 500000, customer: { name: 'نام نمونه', phone: '09120000000', address: 'تهران، خیابان نمونه', postalCode: '1234567890', telegram: '@sample_id', notes: 'لطفاً زنگ بزنید' }, items: [{ id: 'sample', name: 'محصول نمونه', qty: 2, unit: 250000, total: 500000 }] };
 const tplPreview = (t: string) => renderOrderMessage(t || DEFAULT_TEMPLATE, SAMPLE_ORDER, db.settings!.content.brandName, fmt());
 
 function moveImg(i: number, d: number) {
@@ -946,6 +963,22 @@ const actions: Record<string, (el: HTMLElement) => Promise<void> | void> = {
     sd = d; dirty = true; paint();
   },
   clearslot: (el) => { syncSettings(); const k = el.dataset.id as (typeof IMAGE_SLOTS)[number]; const d = structuredClone(cur()); d.images = { ...(d.images ?? {}), [k]: { show: d.images?.[k]?.show ?? false, image: '' } }; sd = d; dirty = true; paint(); },
+  pickarea: async (el) => {
+    const [id, field] = (el.dataset.id ?? '').split('.') as [AreaId, 'image' | 'imageMobile'];
+    syncSettings();
+    const path = await pickImage('banners');
+    if (!path) return;
+    const d = structuredClone(cur()); const t = resolveTheme(d);
+    t.areas[id][field] = path; if (field === 'image') t.areas[id].mode = 'image';
+    d.theme = t; sd = finalize(d); dirty = true; paint();
+  },
+  cleararea: (el) => {
+    const [id, field] = (el.dataset.id ?? '').split('.') as [AreaId, 'image' | 'imageMobile'];
+    syncSettings();
+    const d = structuredClone(cur()); const t = resolveTheme(d);
+    t.areas[id][field] = '';
+    d.theme = t; sd = finalize(d); dirty = true; paint();
+  },
   secup: (el) => moveSection(Number(el.dataset.id), -1),
   secdown: (el) => moveSection(Number(el.dataset.id), 1),
   addbenefit: () => editHome((h) => { h.benefits = [...(h.benefits ?? []), { icon: '✨', title: '', text: '' }]; }),

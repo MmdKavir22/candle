@@ -1,0 +1,6 @@
+# Feature progress (resume from the first unchecked item)
+- [x] 1. Order logic: postalCode + telegram fields, new template vars, default template, tests (`src/shared/order.ts`, `tests/orders.test.ts`)
+- [x] 2. Cart/checkout page: new fields, local (no-worker) checkout + message, "کپی پیام سفارش" (`src/pages/cart.ts`)
+- [x] 3. Backgrounds: area `overlay` (types/theme/validate) + render (`src/components/theme.ts`)
+- [x] 4. Admin: area background editor, template vars help, sample order, order detail/CSV (`src/admin/admin.ts`, `admin.css`)
+- [x] 5. UI polish CSS, glass on cart rows, typecheck + logic tests passed (all stages complete)

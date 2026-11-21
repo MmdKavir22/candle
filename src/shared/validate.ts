@@ -136,7 +136,7 @@ function matches(v: unknown, spec: Spec): boolean {
   if (!isObj(v)) return false;
   return Object.entries(v).every(([k, x]) => { const sp = spec[k]; return sp !== undefined && (typeof sp === 'function' ? sp(x) : matches(x, sp)); });
 }
-const AREA: Spec = { mode: oneOf('inherit', 'solid', 'gradient', 'image'), color: hexP, color2: hexP, angle: within(0, 360), image: imgP, imageMobile: imgP, opacity: within(0, 1), blur: within(0, 30), size: oneOf('cover', 'contain', 'auto'), position: POS, repeat: boolP, attachment: oneOf('scroll', 'fixed') };
+const AREA: Spec = { mode: oneOf('inherit', 'solid', 'gradient', 'image'), color: hexP, color2: hexP, angle: within(0, 360), image: imgP, imageMobile: imgP, opacity: within(0, 1), overlay: within(0, 0.95), blur: within(0, 30), size: oneOf('cover', 'contain', 'auto'), position: POS, repeat: boolP, attachment: oneOf('scroll', 'fixed') };
 const THEME: Spec = {
   colors: { primary: hexP, secondary: hexP, bg: hexP, accent: hexP, accentInk: hexP, text: hexP, muted: hexP, border: hexP },
   radius: within(0, 40), buttons: oneOf('pill', 'rounded', 'square'), motion: boolP, motionLevel: oneOf('off', 'subtle', 'normal', 'lively'),

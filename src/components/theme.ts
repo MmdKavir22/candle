@@ -15,19 +15,27 @@ const LIFT = { off: '0px', subtle: '-3px', normal: '-6px', lively: '-10px' } as 
 const ANIM = { off: '0', subtle: '.6', normal: '1', lively: '1.4' } as const;
 
 /** Layer paint for one area. Only enum/number/hex values (validated) or encodeURI'd URLs are interpolated. */
-function paint(a: Area): string {
+const ov = (a: Area) => Math.min(0.95, Math.max(0, a.overlay ?? 0));
+/** Image layer value: an optional veil in the page colour (the "overlay", for readable text) on top of the picture. */
+function layers(i: string, a: Area, bg: string): string {
+  const o = ov(a), v = `rgba(${rgb(bg)},${o})`;
+  return o > 0 ? `linear-gradient(${v},${v}),${url(i)}` : url(i);
+}
+function paint(a: Area, bg: string): string {
   if (a.mode === 'solid') return `background:${a.color};`;
   if (a.mode === 'gradient') return `background:linear-gradient(${a.angle}deg,${a.color},${a.color2});`;
   const i = img(a.image);
-  return i ? `background-image:${url(i)};background-size:${a.size};background-position:${a.position};background-repeat:${a.repeat ? 'repeat' : 'no-repeat'};background-attachment:${a.attachment};` : '';
+  if (!i) return '';
+  const two = ov(a) > 0, dup = (v: string) => (two ? `${v},${v}` : v);
+  return `background-image:${layers(i, a, bg)};background-size:${dup(a.size)};background-position:${dup(a.position)};background-repeat:${two ? 'no-repeat,' : ''}${a.repeat ? 'repeat' : 'no-repeat'};background-attachment:${dup(a.attachment)};`;
 }
-function areaCss(id: Exclude<AreaId, 'page'>, a: Area): string {
+function areaCss(id: Exclude<AreaId, 'page'>, a: Area, bg: string): string {
   if (a.mode === 'inherit') return '';
   const sel = SEL[id];
   const reset = id === 'hero' ? `${sel}::after{display:none}${sel}{padding-inline:clamp(1rem,3vw,2rem);border-radius:var(--r-lg)}` : '';
-  const mob = a.mode === 'image' && img(a.imageMobile) ? `@media (max-width:800px){${sel}::before{background-image:${url(img(a.imageMobile))}}}` : '';
+  const mob = a.mode === 'image' && img(a.imageMobile) ? `@media (max-width:800px){${sel}::before{background-image:${layers(img(a.imageMobile), a, bg)}}}` : '';
   return `${reset}${sel}{position:relative;isolation:isolate}`
-    + `${sel}::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;width:auto;height:auto;aspect-ratio:auto;transform:none;animation:none;opacity:${a.opacity};${a.blur ? `filter:blur(${a.blur}px);` : 'filter:none;'}${paint(a)}}`
+    + `${sel}::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;width:auto;height:auto;aspect-ratio:auto;transform:none;animation:none;opacity:${a.opacity};${a.blur ? `filter:blur(${a.blur}px);` : 'filter:none;'}${paint(a, bg)}}`
     + `@media (max-width:800px){${sel}::before{background-attachment:scroll}}${mob}`;
 }
 
@@ -65,11 +73,11 @@ export function applyTheme(s: Settings) {
   if (page.mode !== 'inherit') {
     const inner = document.createElement('div');
     inner.className = 'bg-img';
-    inner.style.cssText = `${paint({ ...page, attachment: 'scroll' })}opacity:${page.opacity};${page.blur ? `filter:blur(${page.blur}px);` : ''}`;
+    inner.style.cssText = `${paint({ ...page, attachment: 'scroll' }, c.bg)}opacity:${page.opacity};${page.blur ? `filter:blur(${page.blur}px);` : ''}`;
     layer.style.background = c.bg;
     layer.append(inner);
     if (page.attachment === 'scroll') layer.classList.add('abs');
-    if (page.mode === 'image' && img(page.imageMobile)) css.push(`@media (max-width:800px){#bg .bg-img{background-image:${url(img(page.imageMobile))}!important}}`);
+    if (page.mode === 'image' && img(page.imageMobile)) css.push(`@media (max-width:800px){#bg .bg-img{background-image:${layers(img(page.imageMobile), page, c.bg)}!important}}`);
   } else {
     const image = w?.enabled && img(w.image);
     if (image) {
@@ -90,7 +98,7 @@ export function applyTheme(s: Settings) {
   b.prepend(layer);
 
   // ---- per-area backgrounds + per-section styles (generated stylesheet; no user text is interpolated)
-  AREA_IDS.forEach((id) => { if (id !== 'page') css.push(areaCss(id, t.areas[id])); });
+  AREA_IDS.forEach((id) => { if (id !== 'page') css.push(areaCss(id, t.areas[id], c.bg)); });
   const st = resolveHome(s).styles;
   for (const [id, x] of Object.entries(st)) {
     if (!x) continue;

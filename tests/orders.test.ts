@@ -32,10 +32,20 @@ describe('orders', () => {
   it('renders the customizable template', () => {
     const o = buildOrder({ customer, items: [{ id: 'lavender-dream', qty: 2 }] }, products, opts).order!;
     const m = renderOrderMessage(DEFAULT_TEMPLATE, o, 'B', fmt);
-    expect(m).toContain('ord-x-abcd');
+    expect(m).toContain('نام و نام خانوادگی: علی رضایی');
+    expect(m).toContain('محصولات:');
     expect(m).toContain('علی رضایی');
     expect(m).toContain('500000 T');
     expect(renderOrderMessage('{{brand}}:{{unknown}}', o, 'B', fmt)).toBe('B:{{unknown}}');
+  });
+  it('supports postal code and telegram id in validation and template', () => {
+    const c2 = { ...customer, postalCode: '1234567890', telegram: '@my_id' };
+    expect(validateOrderInput({ customer: c2, items: [{ id: 'a', qty: 1 }] }, false)).toEqual([]);
+    expect(validateOrderInput({ customer: { ...c2, postalCode: '123' }, items: [{ id: 'a', qty: 1 }] }, false).length).toBeGreaterThan(0);
+    expect(validateOrderInput({ customer: { ...c2, telegram: 'a b' }, items: [{ id: 'a', qty: 1 }] }, false).length).toBeGreaterThan(0);
+    const o = buildOrder({ customer: c2, items: [{ id: 'lavender-dream', qty: 1 }] }, products, opts).order!;
+    const m = renderOrderMessage('{{postalCode}}|{{telegram}}|{{address}}', o, 'B', fmt);
+    expect(m).toBe('1234567890|@my_id|—');
   });
   it('generates well-formed ids', () => expect(/^ord-[a-z0-9]+-[a-z0-9]{4,8}$/.test(newOrderId(Date.now(), new Uint8Array([1, 2, 3, 4, 5, 6])))).toBe(true));
 });
